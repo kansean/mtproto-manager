@@ -20,6 +20,9 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
+# ─── Ensure stdin comes from terminal (needed for curl | bash) ───
+exec < /dev/tty || error "Cannot open /dev/tty — run the script in an interactive terminal"
+
 # ─── Check root ───
 if [ "$(id -u)" -ne 0 ]; then
     error "This script must be run as root (use sudo)"
@@ -150,9 +153,9 @@ download_release() {
     # Download from GitHub releases
     info "Downloading latest release from GitHub..."
     TARBALL_URL="https://github.com/${REPO}/releases/latest/download/mtproto.tar.gz"
-    if ! curl -fsSL "$TARBALL_URL" -o /tmp/mtproto.tar.gz; then
+    if ! curl -fsSL "$TARBALL_URL" -o /tmp/mtproto.tar.gz 2>/dev/null; then
         # Fallback: download archive from branch
-        warn "No release tarball found, downloading from branch..."
+        info "Downloading from branch ${BRANCH}..."
         TARBALL_URL="https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz"
         curl -fsSL "$TARBALL_URL" -o /tmp/mtproto.tar.gz || error "Failed to download release"
     fi

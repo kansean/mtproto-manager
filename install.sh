@@ -131,29 +131,17 @@ configure_docker_env() {
 
     info "Configuring Docker for $VIRT_TYPE environment..."
 
-    # Create daemon.json with AppArmor disabled and security adjustments
-    mkdir -p /etc/docker
-    local DAEMON_JSON="/etc/docker/daemon.json"
-
-    if [ -f "$DAEMON_JSON" ] && [ -s "$DAEMON_JSON" ]; then
-        cp "$DAEMON_JSON" "${DAEMON_JSON}.bak"
-        info "Existing daemon.json backed up"
-    fi
-
-    cat > "$DAEMON_JSON" <<'DAEMONJSON'
-{
-  "default-security-opt": ["apparmor=unconfined", "seccomp=unconfined"]
-}
-DAEMONJSON
-
-    # Disable AppArmor service if present (it interferes with Docker in LXC)
-    if systemctl is-active apparmor &>/dev/null; then
+    # Remove AppArmor — inside LXC it cannot load profiles and breaks Docker
+    if command -v apparmor_parser &>/dev/null || dpkg -l apparmor &>/dev/null 2>&1; then
+        info "Removing AppArmor (incompatible with Docker in LXC)..."
         systemctl stop apparmor 2>/dev/null || true
         systemctl disable apparmor 2>/dev/null || true
-        info "AppArmor disabled"
+        apt-get remove -y -qq apparmor >/dev/null 2>&1 \
+            || yum remove -y -q apparmor >/dev/null 2>&1 \
+            || true
     fi
 
-    # Restart Docker to apply new config
+    # Restart Docker after AppArmor removal
     systemctl restart docker
     sleep 2
     ok "Docker configured for $VIRT_TYPE"

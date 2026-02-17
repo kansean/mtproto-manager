@@ -5,7 +5,7 @@ set -euo pipefail
 # Pulls latest release, rebuilds, preserves data/
 
 INSTALL_DIR="/opt/mtproto"
-REPO="your-username/mtproto"  # TODO: update with actual GitHub repo
+REPO="kansean/mtproto-manager"
 BRANCH="main"
 
 RED='\033[0;31m'

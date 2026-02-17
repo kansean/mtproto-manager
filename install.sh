@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: curl -sSL <url>/install.sh | bash
 
 INSTALL_DIR="/opt/mtproto"
-REPO="your-username/mtproto"  # TODO: update with actual GitHub repo
+REPO="kansean/mtproto-manager"
 BRANCH="main"
 
 # Colors

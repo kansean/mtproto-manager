@@ -20,9 +20,6 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
-# ─── Ensure stdin comes from terminal (needed for curl | bash) ───
-exec < /dev/tty || error "Cannot open /dev/tty — run the script in an interactive terminal"
-
 # ─── Check root ───
 if [ "$(id -u)" -ne 0 ]; then
     error "This script must be run as root (use sudo)"
@@ -124,7 +121,7 @@ ensure_compose() {
 download_release() {
     if [ -d "$INSTALL_DIR/app" ]; then
         warn "Existing installation found at $INSTALL_DIR"
-        read -rp "Overwrite? (existing data/ will be preserved) [y/N]: " confirm
+        read -rp "Overwrite? (existing data/ will be preserved) [y/N]: " confirm < /dev/tty
         if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
             error "Installation cancelled"
         fi
@@ -172,22 +169,22 @@ configure() {
     echo ""
 
     # Domain
-    read -rp "Domain name (leave empty for IP-only access): " DOMAIN
+    read -rp "Domain name (leave empty for IP-only access): " DOMAIN < /dev/tty
     DOMAIN="${DOMAIN:-}"
 
     # Proxy port
-    read -rp "MTProto proxy port [2443]: " PROXY_PORT
+    read -rp "MTProto proxy port [2443]: " PROXY_PORT < /dev/tty
     PROXY_PORT="${PROXY_PORT:-2443}"
 
     # HTTPS
     ENABLE_SSL="n"
     if [ -n "$DOMAIN" ]; then
-        read -rp "Enable HTTPS with Let's Encrypt? [y/N]: " ENABLE_SSL
+        read -rp "Enable HTTPS with Let's Encrypt? [y/N]: " ENABLE_SSL < /dev/tty
         ENABLE_SSL="${ENABLE_SSL:-n}"
     fi
 
     # HTTP port
-    read -rp "HTTP port [80]: " HTTP_PORT
+    read -rp "HTTP port [80]: " HTTP_PORT < /dev/tty
     HTTP_PORT="${HTTP_PORT:-80}"
 
     # Generate .env file
@@ -219,7 +216,7 @@ setup_ssl() {
     sleep 3
 
     # Request certificate
-    read -rp "Email for Let's Encrypt notifications: " CERT_EMAIL
+    read -rp "Email for Let's Encrypt notifications: " CERT_EMAIL < /dev/tty
     docker run --rm \
         -v "$INSTALL_DIR/certbot/conf:/etc/letsencrypt" \
         -v "$INSTALL_DIR/certbot/www:/var/www/certbot" \

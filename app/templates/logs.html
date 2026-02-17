@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Logs - MTProto Manager{% endblock %}
+
+{% block content %}
+<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
+    <div>
+        <h2 class="text-2xl font-bold text-white">Logs</h2>
+        <p class="text-dark-300 text-sm mt-1">Proxy container output</p>
+    </div>
+    <div class="flex gap-2">
+        <input id="log-filter" type="text" placeholder="Filter logs..."
+            class="px-3 py-2 bg-dark-700 border border-dark-500 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm w-48"
+            oninput="filterLogs()">
+        <button onclick="refreshLogs()" class="px-4 py-2 bg-dark-600 text-dark-200 rounded-lg text-sm font-medium hover:bg-dark-500 transition-all flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Refresh
+        </button>
+    </div>
+</div>
+
+<div class="card rounded-xl p-4">
+    <pre id="log-output" class="text-xs font-mono text-dark-200 whitespace-pre-wrap break-all max-h-[70vh] overflow-y-auto leading-relaxed">{{ logs if logs else 'No logs available. Start the proxy to see output.' }}</pre>
+</div>
+
+<script>
+let allLogs = '';
+
+async function refreshLogs() {
+    try {
+        const resp = await fetch('/api/logs');
+        const data = await resp.json();
+        allLogs = data.logs || 'No logs available.';
+        filterLogs();
+    } catch(e) {
+        console.error(e);
+    }
+}
+
+function filterLogs() {
+    const filter = document.getElementById('log-filter').value.toLowerCase();
+    const output = document.getElementById('log-output');
+    const text = allLogs || output.textContent;
+    if (!allLogs) allLogs = text;
+
+    if (!filter) {
+        output.textContent = allLogs;
+        return;
+    }
+    const lines = allLogs.split('\n').filter(l => l.toLowerCase().includes(filter));
+    output.textContent = lines.length ? lines.join('\n') : 'No matching lines.';
+}
+
+setInterval(refreshLogs, 5000);
+</script>
+{% endblock %}

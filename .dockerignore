@@ -1,0 +1,12 @@
+venv/
+data/
+__pycache__/
+app/__pycache__/
+app/services/__pycache__/
+.git/
+.claude/
+*.pyc
+*.pyo
+.env
+nginx/
+certbot/

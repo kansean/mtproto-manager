@@ -1,0 +1,5 @@
+flask==3.0.3
+gunicorn==23.0.0
+docker==7.1.0
+qrcode==7.4.2
+pillow==10.4.0

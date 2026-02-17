@@ -36,7 +36,7 @@ detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         OS_ID="$ID"
-        OS_VERSION="$VERSION_ID"
+        OS_VERSION="${VERSION_ID:-unknown}"
     elif [ -f /etc/redhat-release ]; then
         OS_ID="centos"
         OS_VERSION=$(rpm -q --queryformat '%{VERSION}' centos-release 2>/dev/null || echo "unknown")
@@ -45,6 +45,44 @@ detect_os() {
         OS_VERSION="unknown"
     fi
     info "Detected OS: $OS_ID $OS_VERSION"
+}
+
+# ─── Detect virtualization environment ───
+VIRT_TYPE="none"
+detect_virt() {
+    if command -v systemd-detect-virt &>/dev/null; then
+        VIRT_TYPE=$(systemd-detect-virt 2>/dev/null || echo "none")
+    elif [ -f /proc/1/environ ] && tr '\0' '\n' < /proc/1/environ 2>/dev/null | grep -q "container=lxc"; then
+        VIRT_TYPE="lxc"
+    elif [ -d /proc/vz ] && [ ! -d /proc/bc ]; then
+        VIRT_TYPE="openvz"
+    fi
+    info "Virtualization: $VIRT_TYPE"
+}
+
+# ─── Install base prerequisites ───
+install_prerequisites() {
+    info "Checking prerequisites..."
+    case "$OS_ID" in
+        ubuntu|debian)
+            apt-get update -qq
+            apt-get install -y -qq curl ca-certificates tar gnupg lsb-release >/dev/null 2>&1
+            ;;
+        centos|rhel|rocky|almalinux)
+            yum install -y -q curl ca-certificates tar >/dev/null 2>&1
+            ;;
+        fedora)
+            dnf install -y -q curl ca-certificates tar >/dev/null 2>&1
+            ;;
+        *)
+            # Try common package managers
+            apt-get install -y -qq curl ca-certificates tar >/dev/null 2>&1 \
+                || yum install -y -q curl ca-certificates tar >/dev/null 2>&1 \
+                || dnf install -y -q curl ca-certificates tar >/dev/null 2>&1 \
+                || warn "Could not install prerequisites automatically"
+            ;;
+    esac
+    ok "Prerequisites installed"
 }
 
 # ─── Install Docker ───
@@ -57,8 +95,6 @@ install_docker() {
     info "Installing Docker..."
     case "$OS_ID" in
         ubuntu|debian)
-            apt-get update -qq
-            apt-get install -y -qq ca-certificates curl gnupg lsb-release >/dev/null
             install -m 0755 -d /etc/apt/keyrings
             curl -fsSL "https://download.docker.com/linux/$OS_ID/gpg" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null
             chmod a+r /etc/apt/keyrings/docker.gpg
@@ -85,6 +121,42 @@ install_docker() {
     systemctl enable docker
     systemctl start docker
     ok "Docker installed: $(docker --version)"
+}
+
+# ─── Configure Docker for LXC/OpenVZ environments ───
+configure_docker_env() {
+    if [ "$VIRT_TYPE" != "lxc" ] && [ "$VIRT_TYPE" != "openvz" ]; then
+        return
+    fi
+
+    info "Configuring Docker for $VIRT_TYPE environment..."
+
+    # Create daemon.json with AppArmor disabled and security adjustments
+    mkdir -p /etc/docker
+    local DAEMON_JSON="/etc/docker/daemon.json"
+
+    if [ -f "$DAEMON_JSON" ] && [ -s "$DAEMON_JSON" ]; then
+        cp "$DAEMON_JSON" "${DAEMON_JSON}.bak"
+        info "Existing daemon.json backed up"
+    fi
+
+    cat > "$DAEMON_JSON" <<'DAEMONJSON'
+{
+  "default-security-opt": ["apparmor=unconfined", "seccomp=unconfined"]
+}
+DAEMONJSON
+
+    # Disable AppArmor service if present (it interferes with Docker in LXC)
+    if systemctl is-active apparmor &>/dev/null; then
+        systemctl stop apparmor 2>/dev/null || true
+        systemctl disable apparmor 2>/dev/null || true
+        info "AppArmor disabled"
+    fi
+
+    # Restart Docker to apply new config
+    systemctl restart docker
+    sleep 2
+    ok "Docker configured for $VIRT_TYPE"
 }
 
 # ─── Install Docker Compose (if not available as plugin) ───
@@ -117,6 +189,31 @@ ensure_compose() {
     ok "Docker Compose plugin installed"
 }
 
+# ─── Verify Docker works ───
+verify_docker() {
+    info "Verifying Docker..."
+    if docker run --rm hello-world &>/dev/null; then
+        ok "Docker is working correctly"
+    else
+        echo ""
+        warn "Docker verification failed!"
+        if [ "$VIRT_TYPE" = "lxc" ]; then
+            echo -e "${YELLOW}  Your server runs inside an LXC container (Proxmox CT, etc.).${NC}"
+            echo -e "${YELLOW}  Docker requires these settings on the HOST:${NC}"
+            echo -e "${YELLOW}    1. Enable 'Nesting' feature for this CT${NC}"
+            echo -e "${YELLOW}    2. Use a privileged CT (unprivileged won't work)${NC}"
+            echo -e "${YELLOW}  Then reboot the CT and re-run this script.${NC}"
+        elif [ "$VIRT_TYPE" = "openvz" ]; then
+            echo -e "${YELLOW}  Your server runs on OpenVZ, which has limited Docker support.${NC}"
+            echo -e "${YELLOW}  Consider using a KVM-based VPS instead.${NC}"
+        else
+            echo -e "${YELLOW}  Try rebooting the server and re-running this script.${NC}"
+        fi
+        echo ""
+        error "Cannot proceed without a working Docker installation"
+    fi
+}
+
 # ─── Download / extract release ───
 download_release() {
     if [ -d "$INSTALL_DIR/app" ]; then
@@ -147,11 +244,10 @@ download_release() {
         return
     fi
 
-    # Download from GitHub releases
-    info "Downloading latest release from GitHub..."
+    # Download from GitHub
+    info "Downloading from GitHub..."
     TARBALL_URL="https://github.com/${REPO}/releases/latest/download/mtproto.tar.gz"
     if ! curl -fsSL "$TARBALL_URL" -o /tmp/mtproto.tar.gz 2>/dev/null; then
-        # Fallback: download archive from branch
         info "Downloading from branch ${BRANCH}..."
         TARBALL_URL="https://github.com/${REPO}/archive/refs/heads/${BRANCH}.tar.gz"
         curl -fsSL "$TARBALL_URL" -o /tmp/mtproto.tar.gz || error "Failed to download release"
@@ -325,8 +421,12 @@ print_summary() {
 # ─── Main ───
 main() {
     detect_os
+    detect_virt
+    install_prerequisites
     install_docker
+    configure_docker_env
     ensure_compose
+    verify_docker
     download_release
     configure
     setup_ssl

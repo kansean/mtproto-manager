@@ -6,7 +6,7 @@ set -euo pipefail
 
 INSTALL_DIR="/opt/mtproto"
 REPO="kansean/mtproto-manager"
-BRANCH="main"
+BRANCH="master"
 
 # Colors
 RED='\033[0;31m'

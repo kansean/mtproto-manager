@@ -110,6 +110,38 @@
     </div>
 </div>
 
+<!-- Per-User Traffic Breakdown -->
+{% if traffic.per_user %}
+<div class="card rounded-xl p-5 mb-6" id="per-user-traffic">
+    <h3 class="text-white font-semibold mb-4">Traffic by User</h3>
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-dark-600">
+                    <th class="text-left text-dark-300 font-medium py-2 pr-4">User</th>
+                    <th class="text-right text-dark-300 font-medium py-2 px-4">Download</th>
+                    <th class="text-right text-dark-300 font-medium py-2 px-4">Upload</th>
+                    <th class="text-right text-dark-300 font-medium py-2 pl-4">Total</th>
+                </tr>
+            </thead>
+            <tbody id="per-user-traffic-body">
+                {% for pu in traffic.per_user %}
+                <tr class="border-b border-dark-700/50">
+                    <td class="py-2.5 pr-4">
+                        <span class="text-white font-medium">{{ pu.name }}</span>
+                        <span class="text-dark-400 text-xs ml-1.5">:{{ pu.port }}</span>
+                    </td>
+                    <td class="py-2.5 px-4 text-right text-green-400 font-mono per-user-rx">{{ pu.rx_bytes }}</td>
+                    <td class="py-2.5 px-4 text-right text-blue-400 font-mono per-user-tx">{{ pu.tx_bytes }}</td>
+                    <td class="py-2.5 pl-4 text-right text-white font-mono per-user-total">{{ pu.rx_bytes + pu.tx_bytes }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 <!-- Controls + Connection Info -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
     <div class="card rounded-xl p-5">
@@ -208,6 +240,10 @@ document.addEventListener('DOMContentLoaded', function() {
     if (rxEl) rxEl.textContent = formatBytes(parseInt(rxEl.textContent) || 0);
     if (txEl) txEl.textContent = formatBytes(parseInt(txEl.textContent) || 0);
     if (totalEl) totalEl.textContent = formatBytes(parseInt(totalEl.textContent) || 0);
+    // Format per-user values
+    document.querySelectorAll('.per-user-rx, .per-user-tx, .per-user-total').forEach(el => {
+        el.textContent = formatBytes(parseInt(el.textContent) || 0);
+    });
 });
 
 // Live status refresh
@@ -268,6 +304,28 @@ setInterval(async () => {
                 } else {
                     barEl.className = 'h-2 rounded-full transition-all bg-indigo-500';
                 }
+            }
+
+            // Update per-user traffic table
+            const puBody = document.getElementById('per-user-traffic-body');
+            const puSection = document.getElementById('per-user-traffic');
+            if (t.per_user && t.per_user.length > 0) {
+                if (puSection) puSection.classList.remove('hidden');
+                if (puBody) {
+                    puBody.innerHTML = t.per_user.map(pu => `
+                        <tr class="border-b border-dark-700/50">
+                            <td class="py-2.5 pr-4">
+                                <span class="text-white font-medium">${pu.name}</span>
+                                <span class="text-dark-400 text-xs ml-1.5">:${pu.port}</span>
+                            </td>
+                            <td class="py-2.5 px-4 text-right text-green-400 font-mono">${formatBytes(pu.rx_bytes || 0)}</td>
+                            <td class="py-2.5 px-4 text-right text-blue-400 font-mono">${formatBytes(pu.tx_bytes || 0)}</td>
+                            <td class="py-2.5 pl-4 text-right text-white font-mono">${formatBytes((pu.rx_bytes || 0) + (pu.tx_bytes || 0))}</td>
+                        </tr>
+                    `).join('');
+                }
+            } else if (puSection) {
+                puSection.classList.add('hidden');
             }
         }
     } catch(e) {}

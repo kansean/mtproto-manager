@@ -17,10 +17,19 @@ _monitor_thread = None
 _throttle_active = False
 
 
+def _port_from_container_name(name):
+    """Extract port string from container name like 'mtg-proxy-2443'."""
+    parts = name.rsplit("-", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[1]
+    return None
+
+
 def _default_traffic():
     return {
         "rx_bytes": 0,
         "tx_bytes": 0,
+        "per_user": {},
         "last_per_container": {},
         "last_reset": "",
     }
@@ -110,6 +119,13 @@ def _collect_stats_snapshot():
 
         data["rx_bytes"] = data.get("rx_bytes", 0) + delta_rx
         data["tx_bytes"] = data.get("tx_bytes", 0) + delta_tx
+
+        port_str = _port_from_container_name(cname)
+        if port_str:
+            per_user = data.setdefault("per_user", {})
+            pu = per_user.setdefault(port_str, {"rx_bytes": 0, "tx_bytes": 0})
+            pu["rx_bytes"] += delta_rx
+            pu["tx_bytes"] += delta_tx
 
         last_per_container[cname] = {"rx": current_rx, "tx": current_tx}
 
@@ -203,6 +219,25 @@ def get_traffic_summary():
     else:
         limit_used_pct = 0
 
+    # Build per-user list enriched with user names from config
+    users = cfg.get("users", [])
+    port_to_name = {}
+    for u in users:
+        p = u.get("port")
+        if p is not None:
+            port_to_name[str(p)] = u.get("name", "")
+
+    per_user_raw = data.get("per_user", {})
+    per_user = []
+    for port_str, counters in per_user_raw.items():
+        per_user.append({
+            "name": port_to_name.get(port_str, "Unknown"),
+            "port": int(port_str),
+            "rx_bytes": counters.get("rx_bytes", 0),
+            "tx_bytes": counters.get("tx_bytes", 0),
+        })
+    per_user.sort(key=lambda x: x["port"])
+
     return {
         "rx_bytes": data.get("rx_bytes", 0),
         "tx_bytes": data.get("tx_bytes", 0),
@@ -210,6 +245,7 @@ def get_traffic_summary():
         "limit_used_pct": limit_used_pct,
         "throttle_active": _throttle_active,
         "last_reset": data.get("last_reset", ""),
+        "per_user": per_user,
     }
 
 

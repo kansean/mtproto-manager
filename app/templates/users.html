@@ -39,6 +39,17 @@
                     {% endif %}
                     {% if user.port %}
                     <span class="px-2 py-0.5 bg-indigo-900/50 text-indigo-400 text-xs rounded-full border border-indigo-800">Port: {{ user.port }}</span>
+                    {% set ut = traffic_per_user.get(user.port) %}
+                    {% if ut %}
+                    {% set total = ut.rx_bytes + ut.tx_bytes %}
+                    {% if total >= 1073741824 %}
+                    <span class="px-2 py-0.5 bg-purple-900/50 text-purple-400 text-xs rounded-full border border-purple-800" title="Down: {{ '%.1f'|format(ut.rx_bytes / 1073741824) }} GB / Up: {{ '%.1f'|format(ut.tx_bytes / 1073741824) }} GB">Traffic: {{ '%.1f'|format(total / 1073741824) }} GB</span>
+                    {% elif total >= 1048576 %}
+                    <span class="px-2 py-0.5 bg-purple-900/50 text-purple-400 text-xs rounded-full border border-purple-800" title="Down: {{ '%.1f'|format(ut.rx_bytes / 1048576) }} MB / Up: {{ '%.1f'|format(ut.tx_bytes / 1048576) }} MB">Traffic: {{ '%.1f'|format(total / 1048576) }} MB</span>
+                    {% elif total > 0 %}
+                    <span class="px-2 py-0.5 bg-purple-900/50 text-purple-400 text-xs rounded-full border border-purple-800" title="Down: {{ '%.1f'|format(ut.rx_bytes / 1024) }} KB / Up: {{ '%.1f'|format(ut.tx_bytes / 1024) }} KB">Traffic: {{ '%.1f'|format(total / 1024) }} KB</span>
+                    {% endif %}
+                    {% endif %}
                     {% endif %}
                 </div>
                 <div class="space-y-2">

@@ -182,7 +182,9 @@ def create_app():
         for user in users:
             user["tg_link"] = generate_tg_link(user["secret"], cfg, port=user.get("port"))
             user["tme_link"] = generate_tme_link(user["secret"], cfg, port=user.get("port"))
-        return render_template("users.html", users=users, cfg=cfg)
+        traffic = get_traffic_summary()
+        traffic_per_user = {e["port"]: e for e in traffic.get("per_user", [])}
+        return render_template("users.html", users=users, cfg=cfg, traffic_per_user=traffic_per_user)
 
     @app.route("/users/add", methods=["POST"])
     @login_required

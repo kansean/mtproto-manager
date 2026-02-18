@@ -1,2 +1,6 @@
-FROM nineseconds/mtg:2
-RUN apk add --no-cache iproute2
+FROM nineseconds/mtg:2 AS source
+
+FROM alpine:3.20
+RUN apk add --no-cache iproute2 ca-certificates
+COPY --from=source /mtg /usr/local/bin/mtg
+ENTRYPOINT ["mtg"]

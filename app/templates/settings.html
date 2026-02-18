@@ -40,11 +40,11 @@
         </h3>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-                <label class="block text-sm font-medium text-dark-200 mb-1.5">Proxy Port</label>
+                <label class="block text-sm font-medium text-dark-200 mb-1.5">Base Proxy Port</label>
                 <input type="number" name="proxy_port" value="{{ cfg.proxy_port }}"
                     class="w-full px-3.5 py-2.5 bg-dark-700 border border-dark-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
                     min="1" max="65535">
-                <p class="text-dark-400 text-xs mt-1">Avoid ports already in use on this server</p>
+                <p class="text-dark-400 text-xs mt-1">Starting port. Each user gets a sequential port.</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-dark-200 mb-1.5">Fake TLS Domain</label>

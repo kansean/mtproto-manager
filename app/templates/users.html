@@ -37,6 +37,9 @@
                     {% else %}
                     <span class="px-2 py-0.5 bg-red-900/50 text-red-400 text-xs rounded-full border border-red-800">Disabled</span>
                     {% endif %}
+                    {% if user.port %}
+                    <span class="px-2 py-0.5 bg-indigo-900/50 text-indigo-400 text-xs rounded-full border border-indigo-800">Port: {{ user.port }}</span>
+                    {% endif %}
                 </div>
                 <div class="space-y-2">
                     <div>

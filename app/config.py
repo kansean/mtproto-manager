@@ -26,6 +26,28 @@ DEFAULT_CONFIG = {
 }
 
 
+def migrate_user_ports(cfg):
+    """Assign port to users that don't have one yet."""
+    base_port = cfg.get("proxy_port", 2443)
+    users = cfg.get("users", [])
+    changed = False
+    for i, user in enumerate(users):
+        if "port" not in user:
+            user["port"] = base_port + i
+            changed = True
+    return changed
+
+
+def next_available_port(cfg):
+    """Return the next unused port for a new user."""
+    base_port = cfg.get("proxy_port", 2443)
+    users = cfg.get("users", [])
+    if not users:
+        return base_port
+    used_ports = [u.get("port", base_port) for u in users]
+    return max(used_ports) + 1
+
+
 def load_config():
     os.makedirs(DATA_DIR, exist_ok=True)
     if os.path.exists(CONFIG_FILE):
@@ -34,6 +56,8 @@ def load_config():
         for key, val in DEFAULT_CONFIG.items():
             if key not in cfg:
                 cfg[key] = val
+        if migrate_user_ports(cfg):
+            save_config(cfg)
         return cfg
     return DEFAULT_CONFIG.copy()
 

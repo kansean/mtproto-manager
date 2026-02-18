@@ -2,14 +2,11 @@ import docker
 import secrets
 import time
 import json
-import os
 import subprocess
-from app.config import load_config, save_config, DATA_DIR
+from app.config import load_config
 
 
 _docker_client = None
-
-TOML_PATH = os.path.join(DATA_DIR, "mtg.toml")
 
 
 def get_docker_client():
@@ -43,9 +40,41 @@ def generate_secret(fake_tls_domain="www.cloudflare.com"):
         return f"ee{raw}{encoded_domain}"
 
 
+def _container_name_for_user(user):
+    """Return container name based on user's port: mtg-proxy-{port}."""
+    port = user.get("port", 2443)
+    return f"mtg-proxy-{port}"
+
+
+def get_container_for_user(client, user):
+    """Find the container for a specific user by port-based name."""
+    name = _container_name_for_user(user)
+    try:
+        return client.containers.get(name)
+    except docker.errors.NotFound:
+        return None
+
+
+def get_all_proxy_containers(client):
+    """List all mtg-proxy-* containers."""
+    containers = []
+    try:
+        for c in client.containers.list(all=True):
+            if c.name.startswith("mtg-proxy-"):
+                containers.append(c)
+    except Exception:
+        pass
+    return containers
+
+
 def get_container(client=None):
+    """Return the first running proxy container (backwards compat for traffic.py)."""
     if client is None:
         client = get_docker_client()
+    for c in get_all_proxy_containers(client):
+        if c.status == "running":
+            return c
+    # Legacy fallback: try old container name
     cfg = load_config()
     name = cfg.get("proxy_container_name", "mtg-proxy")
     try:
@@ -55,121 +84,61 @@ def get_container(client=None):
 
 
 def get_proxy_status():
+    """Return aggregate proxy status across all per-user containers."""
     try:
         client = get_docker_client()
-        container = get_container(client)
-        if container is None:
+        cfg = load_config()
+        users = cfg.get("users", [])
+        enabled_users = [u for u in users if u.get("enabled", True)]
+
+        containers = get_all_proxy_containers(client)
+        running = [c for c in containers if c.status == "running"]
+
+        if not containers:
             return {
                 "running": False,
                 "status": "not_created",
                 "uptime": None,
                 "container_id": None,
+                "running_count": 0,
+                "total_count": len(enabled_users),
             }
 
-        state = container.attrs.get("State", {})
-        started_at = state.get("StartedAt", "")
+        # Find earliest start time among running containers
+        uptime = None
+        container_id = None
+        if running:
+            earliest = None
+            for c in running:
+                started = c.attrs.get("State", {}).get("StartedAt", "")
+                if started and (earliest is None or started < earliest):
+                    earliest = started
+                    container_id = c.short_id
+            uptime = earliest
+
         return {
-            "running": container.status == "running",
-            "status": container.status,
-            "uptime": started_at,
-            "container_id": container.short_id,
-            "image": container.image.tags[0] if container.image.tags else "unknown",
+            "running": len(running) > 0,
+            "status": "running" if running else containers[0].status,
+            "uptime": uptime,
+            "container_id": container_id,
+            "running_count": len(running),
+            "total_count": len(enabled_users),
         }
     except Exception as e:
         return {
             "running": False,
             "status": "error",
             "error": str(e),
+            "running_count": 0,
+            "total_count": 0,
         }
 
 
-def _write_toml_config(cfg):
-    """Write mtg TOML config file for multi-secret support."""
-    users = cfg.get("users", [])
-    enabled_users = [u for u in users if u.get("enabled", True)]
-    if not enabled_users:
-        return None
+def _start_user_container(client, cfg, user, image):
+    """Start a single container for one user on their assigned port."""
+    port = user.get("port", cfg.get("proxy_port", 2443))
+    container_name = _container_name_for_user(user)
 
-    port = cfg.get("proxy_port", 2443)
-    prefer_ip = cfg.get("proxy_prefer_ip", "prefer-ipv4")
-
-    # Map our prefer-ip values to mtg's expected values
-    ip_map = {
-        "v4": "prefer-ipv4",
-        "v6": "prefer-ipv6",
-        "prefer-v4": "prefer-ipv4",
-        "prefer-v6": "prefer-ipv6",
-        "prefer-ipv4": "prefer-ipv4",
-        "prefer-ipv6": "prefer-ipv6",
-    }
-    prefer_ip = ip_map.get(prefer_ip, "prefer-ipv4")
-
-    lines = []
-    lines.append(f'bind-to = "0.0.0.0:{port}"')
-    lines.append(f'prefer-ip = "{prefer_ip}"')
-    lines.append('concurrency = 4096')
-
-    proxy_tag = cfg.get("proxy_tag", "")
-    if proxy_tag:
-        lines.append(f'proxy-tag = "{proxy_tag}"')
-
-    if cfg.get("stats_enabled", True):
-        lines.append('[stats]')
-        lines.append('bind-to = "0.0.0.0:3129"')
-
-    # First enabled user's secret is the main secret
-    # mtg v2 TOML supports only one secret per instance
-    # For multiple users we need multiple containers, OR use simple-run per user
-    # Actually, checking mtg v2 docs: the config supports a single secret
-    # So for multiple users, we'll run one container per user
-    # BUT that's complex. Let's use simple-run for single user,
-    # and for now, just use the first enabled user's secret.
-    # TOML expects 'secret' field.
-    lines.append(f'secret = "{enabled_users[0]["secret"]}"')
-
-    toml_content = "\n".join(lines) + "\n"
-    with open(TOML_PATH, "w") as f:
-        f.write(toml_content)
-
-    return TOML_PATH
-
-
-def start_proxy():
-    """Start the MTProto proxy container."""
-    cfg = load_config()
-    client = get_docker_client()
-
-    # Stop existing containers
-    _stop_all_proxy_containers(client, cfg)
-
-    users = cfg.get("users", [])
-    enabled_users = [u for u in users if u.get("enabled", True)]
-    if not enabled_users:
-        return {"success": False, "error": "No enabled users/secrets configured"}
-
-    port = cfg.get("proxy_port", 2443)
-    image = cfg.get("proxy_image", "nineseconds/mtg:2")
-    stats_enabled = cfg.get("stats_enabled", True)
-
-    try:
-        try:
-            client.images.get(image)
-        except docker.errors.ImageNotFound:
-            client.images.pull(image)
-    except Exception as e:
-        return {"success": False, "error": f"Failed to pull image: {e}"}
-
-    # Use simple-run for single user (most common case, simplest)
-    if len(enabled_users) == 1:
-        return _start_simple(client, cfg, enabled_users[0], port, image, stats_enabled)
-
-    # For multiple users: run separate containers
-    return _start_multi(client, cfg, enabled_users, port, image, stats_enabled)
-
-
-def _start_simple(client, cfg, user, port, image, stats_enabled):
-    """Start with simple-run (single secret)."""
-    container_name = cfg.get("proxy_container_name", "mtg-proxy")
     prefer_ip = cfg.get("proxy_prefer_ip", "v4")
     ip_map = {"v4": "prefer-ipv4", "v6": "prefer-ipv6", "prefer-v4": "prefer-ipv4", "prefer-v6": "prefer-ipv6"}
     prefer_ip = ip_map.get(prefer_ip, "prefer-ipv4")
@@ -182,84 +151,95 @@ def _start_simple(client, cfg, user, port, image, stats_enabled):
         "--concurrency", "4096",
     ]
 
-    proxy_tag = cfg.get("proxy_tag", "")
-    # simple-run doesn't support proxy-tag or stats, use TOML config for that
-
     ports_map = {f"{port}/tcp": ("0.0.0.0", port)}
 
+    container = client.containers.run(
+        image,
+        command=command,
+        name=container_name,
+        ports=ports_map,
+        restart_policy={"Name": "unless-stopped"},
+        detach=True,
+    )
+
+    time.sleep(2)
+    container.reload()
+
+    if container.status != "running":
+        logs = container.logs(tail=20).decode("utf-8", errors="replace")
+        return {"success": False, "user": user["name"], "port": port, "error": f"Container exited: {logs}"}
+
+    return {"success": True, "user": user["name"], "port": port, "container_id": container.short_id}
+
+
+def start_proxy():
+    """Start one container per enabled user."""
+    cfg = load_config()
+    client = get_docker_client()
+
+    # Stop all existing containers
+    _stop_all_proxy_containers(client)
+
+    users = cfg.get("users", [])
+    enabled_users = [u for u in users if u.get("enabled", True)]
+    if not enabled_users:
+        return {"success": False, "error": "No enabled users/secrets configured"}
+
+    image = cfg.get("proxy_image", "nineseconds/mtg:2")
+
     try:
-        container = client.containers.run(
-            image,
-            command=command,
-            name=container_name,
-            ports=ports_map,
-            restart_policy={"Name": "unless-stopped"},
-            detach=True,
-        )
-
-        time.sleep(2)
-        container.reload()
-
-        if container.status != "running":
-            logs = container.logs(tail=20).decode("utf-8", errors="replace")
-            return {"success": False, "error": f"Container exited: {logs}"}
-
-        return {
-            "success": True,
-            "container_id": container.short_id,
-            "status": container.status,
-        }
+        try:
+            client.images.get(image)
+        except docker.errors.ImageNotFound:
+            client.images.pull(image)
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": f"Failed to pull image: {e}"}
+
+    results = []
+    all_ok = True
+    for user in enabled_users:
+        try:
+            result = _start_user_container(client, cfg, user, image)
+            results.append(result)
+            if not result.get("success"):
+                all_ok = False
+        except Exception as e:
+            results.append({"success": False, "user": user["name"], "error": str(e)})
+            all_ok = False
+
+    running_count = sum(1 for r in results if r.get("success"))
+    return {
+        "success": running_count > 0,
+        "running_count": running_count,
+        "total_count": len(enabled_users),
+        "results": results,
+        "error": None if all_ok else f"{len(enabled_users) - running_count} container(s) failed to start",
+    }
 
 
-def _start_multi(client, cfg, enabled_users, base_port, image, stats_enabled):
-    """Start multiple containers for multiple users."""
-    base_name = cfg.get("proxy_container_name", "mtg-proxy")
-    prefer_ip = cfg.get("proxy_prefer_ip", "v4")
-    ip_map = {"v4": "prefer-ipv4", "v6": "prefer-ipv6", "prefer-v4": "prefer-ipv4", "prefer-v6": "prefer-ipv6"}
-    prefer_ip = ip_map.get(prefer_ip, "prefer-ipv4")
-
-    # All users share the same port — mtg simple-run only allows one secret.
-    # Use TOML config which supports one secret per instance.
-    # For true multi-user on same port, we need one container with config file.
-    # mtg v2 TOML only supports one secret per config.
-    # Solution: use the first user with simple-run on the main port.
-    # Additional users get their own port (base_port + offset).
-    # BUT that's complex for the user. Better approach:
-    #
-    # Since mtg v2 only supports 1 secret per instance, and users want
-    # multiple keys on the same port — we should switch to mtg v1 or
-    # the official mtproto-proxy which supports multiple secrets.
-    #
-    # For now: run first user on the configured port, warn about limitation.
-
-    result = _start_simple(client, cfg, enabled_users[0], base_port, image, stats_enabled)
-    if result.get("success") and len(enabled_users) > 1:
-        result["warning"] = (
-            f"mtg v2 supports 1 secret per instance. "
-            f"Running with '{enabled_users[0]['name']}' secret. "
-            f"{len(enabled_users) - 1} other user(s) ignored."
-        )
-    return result
-
-
-def _stop_all_proxy_containers(client, cfg):
-    """Stop all proxy containers."""
-    base_name = cfg.get("proxy_container_name", "mtg-proxy")
+def _stop_all_proxy_containers(client):
+    """Stop legacy mtg-proxy and all mtg-proxy-* containers."""
+    # Stop legacy container
     try:
-        container = client.containers.get(base_name)
+        container = client.containers.get("mtg-proxy")
         container.stop(timeout=5)
         container.remove()
     except (docker.errors.NotFound, Exception):
         pass
 
+    # Stop all per-user containers
+    for c in get_all_proxy_containers(client):
+        try:
+            c.stop(timeout=5)
+            c.remove()
+        except Exception:
+            pass
+
 
 def stop_proxy():
     try:
         client = get_docker_client()
-        cfg = load_config()
-        _stop_all_proxy_containers(client, cfg)
+        _stop_all_proxy_containers(client)
         return {"success": True}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -271,12 +251,26 @@ def restart_proxy():
 
 
 def get_proxy_logs(tail=100):
+    """Aggregate logs from all running proxy containers."""
     try:
         client = get_docker_client()
-        container = get_container(client)
-        if container is None:
+        containers = get_all_proxy_containers(client)
+        if not containers:
             return ""
-        return container.logs(tail=tail, timestamps=True).decode("utf-8", errors="replace")
+
+        all_logs = []
+        for c in containers:
+            try:
+                prefix = f"[{c.name}] "
+                lines = c.logs(tail=tail // max(len(containers), 1), timestamps=True).decode("utf-8", errors="replace")
+                for line in lines.splitlines():
+                    all_logs.append(prefix + line)
+            except Exception:
+                pass
+
+        # Sort by timestamp (timestamps are at the start of each line after prefix)
+        all_logs.sort(key=lambda x: x.split("] ", 1)[1] if "] " in x else x)
+        return "\n".join(all_logs[-tail:])
     except Exception as e:
         return f"Error getting logs: {e}"
 
@@ -294,19 +288,21 @@ def get_proxy_stats():
         return None
 
 
-def generate_tg_link(secret, cfg=None):
+def generate_tg_link(secret, cfg=None, port=None):
     if cfg is None:
         cfg = load_config()
     server = cfg.get("server_domain") or cfg.get("server_ip", "")
-    port = cfg.get("proxy_port", 2443)
+    if port is None:
+        port = cfg.get("proxy_port", 2443)
     return f"tg://proxy?server={server}&port={port}&secret={secret}"
 
 
-def generate_tme_link(secret, cfg=None):
+def generate_tme_link(secret, cfg=None, port=None):
     if cfg is None:
         cfg = load_config()
     server = cfg.get("server_domain") or cfg.get("server_ip", "")
-    port = cfg.get("proxy_port", 2443)
+    if port is None:
+        port = cfg.get("proxy_port", 2443)
     return f"https://t.me/proxy?server={server}&port={port}&secret={secret}"
 
 

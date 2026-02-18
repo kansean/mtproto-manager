@@ -329,23 +329,24 @@ setup_ssl() {
 
 # ─── Open firewall ports ───
 setup_firewall() {
+    PROXY_PORT_END=$((PROXY_PORT + 9))
     if command -v ufw &>/dev/null; then
         info "Configuring UFW firewall..."
         ufw allow "$HTTP_PORT/tcp" >/dev/null 2>&1
-        ufw allow "$PROXY_PORT/tcp" >/dev/null 2>&1
+        ufw allow "$PROXY_PORT:$PROXY_PORT_END/tcp" >/dev/null 2>&1
         if [[ "$ENABLE_SSL" =~ ^[Yy]$ ]]; then
             ufw allow 443/tcp >/dev/null 2>&1
         fi
-        ok "Firewall rules added"
+        ok "Firewall rules added (proxy ports $PROXY_PORT-$PROXY_PORT_END)"
     elif command -v firewall-cmd &>/dev/null; then
         info "Configuring firewalld..."
         firewall-cmd --permanent --add-port="$HTTP_PORT/tcp" >/dev/null 2>&1
-        firewall-cmd --permanent --add-port="$PROXY_PORT/tcp" >/dev/null 2>&1
+        firewall-cmd --permanent --add-port="$PROXY_PORT-$PROXY_PORT_END/tcp" >/dev/null 2>&1
         if [[ "$ENABLE_SSL" =~ ^[Yy]$ ]]; then
             firewall-cmd --permanent --add-port=443/tcp >/dev/null 2>&1
         fi
         firewall-cmd --reload >/dev/null 2>&1
-        ok "Firewall rules added"
+        ok "Firewall rules added (proxy ports $PROXY_PORT-$PROXY_PORT_END)"
     fi
 }
 

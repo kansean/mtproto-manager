@@ -13,7 +13,7 @@ from flask import (
 )
 import qrcode
 
-from app.config import load_config, save_config, get_or_create_secret_key, DATA_DIR
+from app.config import load_config, save_config, get_or_create_secret_key, next_available_port, DATA_DIR
 from app.services.mtproto import (
     generate_secret, get_proxy_status, start_proxy, stop_proxy,
     restart_proxy, get_proxy_logs, get_proxy_stats,
@@ -180,8 +180,8 @@ def create_app():
         cfg = load_config()
         users = cfg.get("users", [])
         for user in users:
-            user["tg_link"] = generate_tg_link(user["secret"], cfg)
-            user["tme_link"] = generate_tme_link(user["secret"], cfg)
+            user["tg_link"] = generate_tg_link(user["secret"], cfg, port=user.get("port"))
+            user["tme_link"] = generate_tme_link(user["secret"], cfg, port=user.get("port"))
         return render_template("users.html", users=users, cfg=cfg)
 
     @app.route("/users/add", methods=["POST"])
@@ -195,10 +195,12 @@ def create_app():
 
         fake_tls = cfg.get("fake_tls_domain", "google.com")
         secret = generate_secret(fake_tls)
+        port = next_available_port(cfg)
         user = {
             "name": name,
             "secret": secret,
             "enabled": True,
+            "port": port,
             "created_at": datetime.datetime.now().isoformat(),
         }
         cfg.setdefault("users", []).append(user)
@@ -248,7 +250,7 @@ def create_app():
         cfg = load_config()
         users = cfg.get("users", [])
         if 0 <= idx < len(users):
-            link = generate_tme_link(users[idx]["secret"], cfg)
+            link = generate_tme_link(users[idx]["secret"], cfg, port=users[idx].get("port"))
             img = qrcode.make(link, box_size=8, border=2)
             buf = io.BytesIO()
             img.save(buf, format="PNG")
@@ -262,7 +264,11 @@ def create_app():
     def proxy_start():
         result = start_proxy()
         if result.get("success"):
-            flash("Proxy started", "success")
+            rc = result.get("running_count", 0)
+            tc = result.get("total_count", 0)
+            flash(f"Proxy started ({rc}/{tc} containers)", "success")
+            if result.get("error"):
+                flash(result["error"], "warning")
         else:
             flash(f"Failed to start: {result.get('error')}", "error")
         return redirect(url_for("dashboard"))
@@ -282,7 +288,11 @@ def create_app():
     def proxy_restart():
         result = restart_proxy()
         if result.get("success"):
-            flash("Proxy restarted", "success")
+            rc = result.get("running_count", 0)
+            tc = result.get("total_count", 0)
+            flash(f"Proxy restarted ({rc}/{tc} containers)", "success")
+            if result.get("error"):
+                flash(result["error"], "warning")
         else:
             flash(f"Failed to restart: {result.get('error')}", "error")
         return redirect(url_for("dashboard"))

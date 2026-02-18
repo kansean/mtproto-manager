@@ -16,13 +16,14 @@ _lock = threading.Lock()
 _monitor_thread = None
 _throttle_active = False
 
-DEFAULT_TRAFFIC = {
-    "rx_bytes": 0,
-    "tx_bytes": 0,
-    "last_rx": 0,
-    "last_tx": 0,
-    "last_reset": "",
-}
+
+def _default_traffic():
+    return {
+        "rx_bytes": 0,
+        "tx_bytes": 0,
+        "last_per_container": {},
+        "last_reset": "",
+    }
 
 
 def load_traffic_data():
@@ -31,13 +32,17 @@ def load_traffic_data():
             try:
                 with open(TRAFFIC_FILE, "r") as f:
                     data = json.load(f)
-                for key, val in DEFAULT_TRAFFIC.items():
+                for key, val in _default_traffic().items():
                     if key not in data:
                         data[key] = val
+                # Migrate old single-container fields
+                if "last_rx" in data or "last_tx" in data:
+                    data.pop("last_rx", None)
+                    data.pop("last_tx", None)
                 return data
             except (json.JSONDecodeError, OSError):
                 pass
-        return DEFAULT_TRAFFIC.copy()
+        return _default_traffic()
 
 
 def save_traffic_data(data):
@@ -56,62 +61,59 @@ def save_traffic_data(data):
             raise
 
 
-def _get_container():
-    """Get the proxy container via Docker API."""
+def _get_containers():
+    """Get all running proxy containers."""
     try:
-        from app.services.mtproto import get_docker_client, get_container
+        from app.services.mtproto import get_docker_client, get_all_proxy_containers
         client = get_docker_client()
-        return get_container(client)
+        return [c for c in get_all_proxy_containers(client) if c.status == "running"]
     except Exception:
-        return None
+        return []
 
 
 def _collect_stats_snapshot():
-    """Collect Docker network stats and accumulate traffic delta."""
-    container = _get_container()
-    if container is None or container.status != "running":
+    """Collect Docker network stats from all proxy containers and accumulate traffic delta."""
+    containers = _get_containers()
+    if not containers:
         return
-
-    try:
-        stats = container.stats(stream=False)
-    except Exception as e:
-        logger.debug("Failed to get container stats: %s", e)
-        return
-
-    networks = stats.get("networks", {})
-    eth0 = networks.get("eth0", {})
-    if not eth0:
-        # Some setups use different interface names; try first available
-        for iface_data in networks.values():
-            eth0 = iface_data
-            break
-    if not eth0:
-        return
-
-    current_rx = eth0.get("rx_bytes", 0)
-    current_tx = eth0.get("tx_bytes", 0)
 
     data = load_traffic_data()
+    last_per_container = data.get("last_per_container", {})
 
-    last_rx = data.get("last_rx", 0)
-    last_tx = data.get("last_tx", 0)
+    for container in containers:
+        try:
+            stats = container.stats(stream=False)
+        except Exception as e:
+            logger.debug("Failed to get stats for %s: %s", container.name, e)
+            continue
 
-    # Calculate delta; if current < last, container restarted (counters reset)
-    if current_rx >= last_rx:
-        delta_rx = current_rx - last_rx
-    else:
-        delta_rx = current_rx  # restart: baseline = 0
+        networks = stats.get("networks", {})
+        eth0 = networks.get("eth0", {})
+        if not eth0:
+            for iface_data in networks.values():
+                eth0 = iface_data
+                break
+        if not eth0:
+            continue
 
-    if current_tx >= last_tx:
-        delta_tx = current_tx - last_tx
-    else:
-        delta_tx = current_tx
+        current_rx = eth0.get("rx_bytes", 0)
+        current_tx = eth0.get("tx_bytes", 0)
 
-    data["rx_bytes"] = data.get("rx_bytes", 0) + delta_rx
-    data["tx_bytes"] = data.get("tx_bytes", 0) + delta_tx
-    data["last_rx"] = current_rx
-    data["last_tx"] = current_tx
+        cname = container.name
+        prev = last_per_container.get(cname, {"rx": 0, "tx": 0})
+        last_rx = prev.get("rx", 0)
+        last_tx = prev.get("tx", 0)
 
+        # Calculate delta; if current < last, container restarted (counters reset)
+        delta_rx = current_rx - last_rx if current_rx >= last_rx else current_rx
+        delta_tx = current_tx - last_tx if current_tx >= last_tx else current_tx
+
+        data["rx_bytes"] = data.get("rx_bytes", 0) + delta_rx
+        data["tx_bytes"] = data.get("tx_bytes", 0) + delta_tx
+
+        last_per_container[cname] = {"rx": current_rx, "tx": current_tx}
+
+    data["last_per_container"] = last_per_container
     save_traffic_data(data)
 
 
@@ -140,51 +142,50 @@ def _check_and_enforce_limits():
 
 
 def _apply_throttle(speed_mbps):
-    """Apply tc rate limit inside the proxy container."""
+    """Apply tc rate limit inside all proxy containers."""
     global _throttle_active
-    container = _get_container()
-    if container is None or container.status != "running":
+    containers = _get_containers()
+    if not containers:
         return
 
     rate = f"{speed_mbps}mbit"
-    # burst = rate / 8 * 0.01 (10ms worth of data), minimum 1600 bytes
     burst_bytes = max(int(speed_mbps * 1000000 / 8 * 0.01), 1600)
     burst = f"{burst_bytes}"
 
-    try:
-        # Remove existing qdisc first (ignore errors if none exists)
-        container.exec_run("tc qdisc del dev eth0 root", demux=True)
-    except Exception:
-        pass
+    applied = False
+    for container in containers:
+        try:
+            container.exec_run("tc qdisc del dev eth0 root", demux=True)
+        except Exception:
+            pass
+        try:
+            result = container.exec_run(
+                f"tc qdisc add dev eth0 root tbf rate {rate} burst {burst} latency 50ms",
+                demux=True,
+            )
+            exit_code = result.exit_code if hasattr(result, 'exit_code') else result[0]
+            if exit_code == 0:
+                applied = True
+                logger.info("Throttle applied to %s: %s", container.name, rate)
+            else:
+                output = result.output if hasattr(result, 'output') else result[1]
+                logger.warning("Failed to apply throttle to %s (exit %s): %s", container.name, exit_code, output)
+        except Exception as e:
+            logger.warning("Failed to apply throttle to %s: %s", container.name, e)
 
-    try:
-        result = container.exec_run(
-            f"tc qdisc add dev eth0 root tbf rate {rate} burst {burst} latency 50ms",
-            demux=True,
-        )
-        exit_code = result.exit_code if hasattr(result, 'exit_code') else result[0]
-        if exit_code == 0:
-            _throttle_active = True
-            logger.info("Throttle applied: %s", rate)
-        else:
-            output = result.output if hasattr(result, 'output') else result[1]
-            logger.warning("Failed to apply throttle (exit %s): %s", exit_code, output)
-    except Exception as e:
-        logger.warning("Failed to apply throttle: %s", e)
+    if applied:
+        _throttle_active = True
 
 
 def _remove_throttle():
-    """Remove tc rate limit from the proxy container."""
+    """Remove tc rate limit from all proxy containers."""
     global _throttle_active
-    container = _get_container()
-    if container is None or container.status != "running":
-        _throttle_active = False
-        return
-
-    try:
-        container.exec_run("tc qdisc del dev eth0 root", demux=True)
-    except Exception:
-        pass
+    containers = _get_containers()
+    for container in containers:
+        try:
+            container.exec_run("tc qdisc del dev eth0 root", demux=True)
+        except Exception:
+            pass
     _throttle_active = False
     logger.info("Throttle removed")
 
@@ -214,7 +215,7 @@ def get_traffic_summary():
 
 def reset_traffic_data():
     """Reset traffic counters and remove throttle."""
-    data = DEFAULT_TRAFFIC.copy()
+    data = _default_traffic()
     data["last_reset"] = datetime.datetime.now().isoformat()
     save_traffic_data(data)
     if _throttle_active:

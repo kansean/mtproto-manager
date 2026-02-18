@@ -20,6 +20,9 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 
+# ─── Ensure sane working directory ───
+cd / 2>/dev/null || true
+
 # ─── Check root ───
 if [ "$(id -u)" -ne 0 ]; then
     error "This script must be run as root (use sudo)"
@@ -96,7 +99,7 @@ install_docker() {
     case "$OS_ID" in
         ubuntu|debian)
             install -m 0755 -d /etc/apt/keyrings
-            curl -fsSL "https://download.docker.com/linux/$OS_ID/gpg" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null
+            curl -fsSL "https://download.docker.com/linux/$OS_ID/gpg" | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg 2>/dev/null
             chmod a+r /etc/apt/keyrings/docker.gpg
             echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$OS_ID $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
             apt-get update -qq

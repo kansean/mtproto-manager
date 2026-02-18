@@ -17,7 +17,7 @@ DEFAULT_CONFIG = {
     "proxy_container_name": "mtg-proxy",
     "proxy_image": "mtg-custom",
     "users": [],
-    "fake_tls_domain": "google.com",
+    "fake_tls_domain": "www.cloudflare.com",
     "proxy_buffer_size": "32KB",
     "proxy_prefer_ip": "v4",
     "stats_enabled": True,

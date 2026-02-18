@@ -23,7 +23,7 @@ def get_docker_client():
     return _docker_client
 
 
-def generate_secret(fake_tls_domain="google.com"):
+def generate_secret(fake_tls_domain="www.cloudflare.com"):
     """Generate a secret via mtg generate-secret (includes domain fronting)."""
     try:
         client = get_docker_client()

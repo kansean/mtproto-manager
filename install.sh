@@ -377,11 +377,24 @@ print_summary() {
     echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
     echo ""
 
-    # Get admin credentials from logs
+    # Get admin credentials from logs or config
     ADMIN_CREDS=$(docker logs mtproto-app 2>&1 | grep -A3 "INITIAL ADMIN CREDENTIALS" || true)
     if [ -n "$ADMIN_CREDS" ]; then
         echo -e "${YELLOW}$ADMIN_CREDS${NC}"
         echo ""
+    else
+        # Fallback: read from config.json if credentials were not captured from logs
+        CONFIG_FILE="$INSTALL_DIR/data/config.json"
+        if [ -f "$CONFIG_FILE" ]; then
+            ADMIN_USER=$(grep -o '"admin_username"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
+            ADMIN_PASS=$(grep -o '"_initial_password"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
+            if [ -n "$ADMIN_USER" ] && [ -n "$ADMIN_PASS" ]; then
+                echo -e "${YELLOW}  INITIAL ADMIN CREDENTIALS${NC}"
+                echo -e "${YELLOW}  Username: ${ADMIN_USER}${NC}"
+                echo -e "${YELLOW}  Password: ${ADMIN_PASS}${NC}"
+                echo ""
+            fi
+        fi
     fi
 
     SERVER_IP=$(curl -s https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')

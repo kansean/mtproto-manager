@@ -121,9 +121,10 @@
         <div>
             <h4 class="text-yellow-400 font-medium text-sm">Important Notes</h4>
             <ul class="text-yellow-300/70 text-sm mt-1 space-y-1 list-disc list-inside">
+                {% if cfg.server_domain %}
                 <li>DNS: <strong>{{ cfg.server_domain }}</strong> must point to <strong>{{ cfg.server_ip }}</strong></li>
-                <li>Port 443 is used by Amnezia VPN. Proxy uses port <strong>{{ cfg.proxy_port }}</strong></li>
-                <li>Web UI: <strong>https://{{ cfg.server_domain }}:8443</strong></li>
+                {% endif %}
+                <li>MTProto proxy port: <strong>{{ cfg.proxy_port }}</strong></li>
             </ul>
         </div>
     </div>

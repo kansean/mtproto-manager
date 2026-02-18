@@ -80,6 +80,7 @@ cp "$TEMP_DIR/requirements.txt" "$INSTALL_DIR/"
 cp "$TEMP_DIR/wsgi.py" "$INSTALL_DIR/"
 cp "$TEMP_DIR/.dockerignore" "$INSTALL_DIR/"
 [ -f "$TEMP_DIR/update.sh" ] && cp "$TEMP_DIR/update.sh" "$INSTALL_DIR/"
+[ -f "$TEMP_DIR/Dockerfile.mtg" ] && cp "$TEMP_DIR/Dockerfile.mtg" "$INSTALL_DIR/"
 
 # Preserve SSL nginx config if it was customized
 if [ -f "$TEMP_DIR/nginx/ssl.conf.template" ]; then
@@ -89,6 +90,14 @@ fi
 
 rm -rf "$TEMP_DIR"
 ok "Files updated"
+
+# Rebuild custom mtg image
+if [ -f "$INSTALL_DIR/Dockerfile.mtg" ]; then
+    info "Rebuilding custom mtg image..."
+    docker build -t mtg-custom -f "$INSTALL_DIR/Dockerfile.mtg" "$INSTALL_DIR" \
+        && ok "Custom mtg image rebuilt" \
+        || warn "Failed to build custom mtg image; traffic throttling will not work"
+fi
 
 # Rebuild and restart
 info "Rebuilding and starting services..."

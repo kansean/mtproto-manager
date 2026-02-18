@@ -178,6 +178,25 @@ bash /opt/mtproto/update.sh
 4. Обновляет файлы приложения (каталог `data/` и конфигурация nginx сохраняются)
 5. Пересобирает и запускает контейнеры
 
+### Полное удаление
+
+```bash
+# Остановить и удалить все контейнеры, сети и образы проекта
+cd /opt/mtproto
+docker compose --profile ssl down --rmi all --volumes 2>/dev/null; docker compose down --rmi all --volumes
+
+# Удалить mtg-proxy контейнер (создаётся приложением динамически)
+docker rm -f mtg-proxy 2>/dev/null
+
+# Удалить файлы проекта
+rm -rf /opt/mtproto
+
+# Удалить неиспользуемые Docker-образы (опционально)
+docker image prune -f
+```
+
+> Docker и Docker Compose останутся в системе. Для их удаления: `apt-get remove -y docker-ce docker-ce-cli containerd.io docker-compose-plugin` (Ubuntu/Debian) или `yum remove -y docker-ce docker-ce-cli containerd.io docker-compose-plugin` (CentOS/Fedora).
+
 ## Веб-интерфейс
 
 ### Страницы

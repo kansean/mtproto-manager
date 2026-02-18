@@ -83,6 +83,52 @@
         </div>
     </div>
 
+    <!-- Traffic Limits -->
+    <div class="card rounded-xl p-5">
+        <h3 class="text-white font-semibold mb-4 flex items-center gap-2">
+            <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+            Traffic Limits
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-dark-200 mb-1.5">Traffic Limit (GB)</label>
+                <input type="number" name="traffic_limit_gb" value="{{ cfg.traffic_limit_gb }}"
+                    class="w-full px-3.5 py-2.5 bg-dark-700 border border-dark-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    min="0" step="0.1" placeholder="0">
+                <p class="text-dark-400 text-xs mt-1">0 = no limit</p>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-dark-200 mb-1.5">Throttle Speed (Mbps)</label>
+                <input type="number" name="throttle_speed_mbps" value="{{ cfg.throttle_speed_mbps }}"
+                    class="w-full px-3.5 py-2.5 bg-dark-700 border border-dark-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    min="0.1" step="0.1" placeholder="1">
+                <p class="text-dark-400 text-xs mt-1">Speed when limit is exceeded</p>
+            </div>
+        </div>
+        <div class="mt-4 pt-4 border-t border-dark-600">
+            <div class="flex items-center justify-between">
+                <div class="text-sm">
+                    <span class="text-dark-300">Current usage:</span>
+                    <span class="text-white font-mono" id="settings-traffic-used">
+                        {% set total = (traffic.rx_bytes|default(0) + traffic.tx_bytes|default(0)) %}
+                        {% if total >= 1073741824 %}
+                            {{ "%.2f"|format(total / 1073741824) }} GB
+                        {% elif total >= 1048576 %}
+                            {{ "%.2f"|format(total / 1048576) }} MB
+                        {% elif total >= 1024 %}
+                            {{ "%.2f"|format(total / 1024) }} KB
+                        {% else %}
+                            {{ total }} B
+                        {% endif %}
+                    </span>
+                    {% if traffic.throttle_active %}
+                    <span class="ml-2 text-xs font-medium px-2 py-0.5 rounded-full bg-red-900/50 text-red-400 border border-red-700">Throttled</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Account Settings -->
     <div class="card rounded-xl p-5">
         <h3 class="text-white font-semibold mb-4 flex items-center gap-2">
@@ -110,5 +156,13 @@
         </button>
         <p class="text-dark-400 text-sm self-center">Proxy restart required after changes.</p>
     </div>
+</form>
+
+<form method="POST" action="{{ url_for('traffic_reset') }}" class="mt-4 max-w-2xl" onsubmit="return confirm('Reset all traffic counters to zero?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="bg-yellow-600 hover:bg-yellow-500 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:shadow-lg transition-all flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Reset Traffic Counter
+    </button>
 </form>
 {% endblock %}

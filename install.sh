@@ -230,6 +230,7 @@ download_release() {
             cp "$SCRIPT_DIR/.dockerignore" "$INSTALL_DIR/"
             cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
             cp "$SCRIPT_DIR/wsgi.py" "$INSTALL_DIR/"
+            [ -f "$SCRIPT_DIR/Dockerfile.mtg" ] && cp "$SCRIPT_DIR/Dockerfile.mtg" "$INSTALL_DIR/"
             [ -f "$SCRIPT_DIR/update.sh" ] && cp "$SCRIPT_DIR/update.sh" "$INSTALL_DIR/"
         fi
         return
@@ -348,6 +349,16 @@ setup_firewall() {
     fi
 }
 
+# ─── Build custom mtg image with iproute2 (for traffic control) ───
+build_mtg_image() {
+    if [ -f "$INSTALL_DIR/Dockerfile.mtg" ]; then
+        info "Building custom mtg image (with traffic control support)..."
+        docker build -t mtg-custom -f "$INSTALL_DIR/Dockerfile.mtg" "$INSTALL_DIR" \
+            && ok "Custom mtg image built" \
+            || warn "Failed to build custom mtg image; traffic throttling will not work"
+    fi
+}
+
 # ─── Start services ───
 start_services() {
     info "Building and starting services..."
@@ -432,6 +443,7 @@ main() {
     ensure_compose
     verify_docker
     download_release
+    build_mtg_image
     configure
     setup_ssl
     setup_firewall

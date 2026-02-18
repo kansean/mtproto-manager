@@ -19,6 +19,9 @@ from app.services.mtproto import (
     restart_proxy, get_proxy_logs, get_proxy_stats,
     generate_tg_link, generate_tme_link, detect_server_ip
 )
+from app.services.traffic import (
+    start_traffic_monitor, get_traffic_summary, reset_traffic_data
+)
 
 # Simple in-memory rate limiter for login
 _login_attempts = {}  # ip -> (count, first_attempt_time)
@@ -89,6 +92,7 @@ def create_app():
     app.config["PERMANENT_SESSION_LIFETIME"] = datetime.timedelta(hours=12)
 
     init_config()
+    start_traffic_monitor()
 
     # --- CSRF ---
     @app.before_request
@@ -156,12 +160,14 @@ def create_app():
         cfg = load_config()
         status = get_proxy_status()
         stats = get_proxy_stats()
+        traffic = get_traffic_summary()
         users = cfg.get("users", [])
         enabled_count = sum(1 for u in users if u.get("enabled", True))
         return render_template(
             "dashboard.html",
             status=status,
             stats=stats,
+            traffic=traffic,
             cfg=cfg,
             user_count=len(users),
             enabled_count=enabled_count,
@@ -313,6 +319,18 @@ def create_app():
             cfg["proxy_prefer_ip"] = request.form.get("proxy_prefer_ip", "v4")
             cfg["stats_enabled"] = "stats_enabled" in request.form
 
+            try:
+                traffic_limit = float(request.form.get("traffic_limit_gb", "0"))
+                cfg["traffic_limit_gb"] = max(traffic_limit, 0)
+            except (ValueError, TypeError):
+                pass
+
+            try:
+                throttle_speed = float(request.form.get("throttle_speed_mbps", "1"))
+                cfg["throttle_speed_mbps"] = max(throttle_speed, 0.1)
+            except (ValueError, TypeError):
+                pass
+
             new_password = request.form.get("new_password", "").strip()
             if new_password:
                 if len(new_password) < 6:
@@ -329,7 +347,16 @@ def create_app():
             flash("Settings saved", "success")
             return redirect(url_for("settings"))
 
-        return render_template("settings.html", cfg=cfg)
+        traffic = get_traffic_summary()
+        return render_template("settings.html", cfg=cfg, traffic=traffic)
+
+    # --- Traffic ---
+    @app.route("/traffic/reset", methods=["POST"])
+    @login_required
+    def traffic_reset():
+        reset_traffic_data()
+        flash("Traffic counters reset", "success")
+        return redirect(request.referrer or url_for("settings"))
 
     # --- API endpoints for AJAX ---
     @app.route("/api/status")
@@ -337,7 +364,8 @@ def create_app():
     def api_status():
         status = get_proxy_status()
         stats = get_proxy_stats()
-        return jsonify({"status": status, "stats": stats})
+        traffic = get_traffic_summary()
+        return jsonify({"status": status, "stats": stats, "traffic": traffic})
 
     @app.route("/api/logs")
     @login_required

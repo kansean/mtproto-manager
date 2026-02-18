@@ -15,12 +15,14 @@ DEFAULT_CONFIG = {
     "proxy_port": 2443,
     "proxy_tag": "",
     "proxy_container_name": "mtg-proxy",
-    "proxy_image": "nineseconds/mtg:2",
+    "proxy_image": "mtg-custom",
     "users": [],
     "fake_tls_domain": "google.com",
     "proxy_buffer_size": "32KB",
     "proxy_prefer_ip": "v4",
     "stats_enabled": True,
+    "traffic_limit_gb": 0,
+    "throttle_speed_mbps": 1,
 }
 
 

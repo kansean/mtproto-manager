@@ -50,6 +50,55 @@
     </div>
 </div>
 
+<!-- Traffic Cards -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <div class="card rounded-xl p-5">
+        <div class="flex items-center justify-between mb-3">
+            <span class="text-dark-300 text-sm font-medium">Traffic In</span>
+            <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+        </div>
+        <div id="traffic-rx" class="text-xl font-bold text-white">{{ traffic.rx_bytes | default(0) }}</div>
+        <p class="text-dark-400 text-xs mt-1">received</p>
+    </div>
+
+    <div class="card rounded-xl p-5">
+        <div class="flex items-center justify-between mb-3">
+            <span class="text-dark-300 text-sm font-medium">Traffic Out</span>
+            <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+        </div>
+        <div id="traffic-tx" class="text-xl font-bold text-white">{{ traffic.tx_bytes | default(0) }}</div>
+        <p class="text-dark-400 text-xs mt-1">sent</p>
+    </div>
+
+    <div class="card rounded-xl p-5">
+        <div class="flex items-center justify-between mb-3">
+            <span class="text-dark-300 text-sm font-medium">Total Traffic</span>
+            <svg class="w-5 h-5 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg>
+        </div>
+        <div id="traffic-total" class="text-xl font-bold text-white">{{ (traffic.rx_bytes|default(0) + traffic.tx_bytes|default(0)) }}</div>
+        <p class="text-dark-400 text-xs mt-1">rx + tx</p>
+    </div>
+
+    <div class="card rounded-xl p-5">
+        <div class="flex items-center justify-between mb-3">
+            <span class="text-dark-300 text-sm font-medium">Limit Usage</span>
+            {% if traffic.throttle_active %}
+            <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-red-900/50 text-red-400 border border-red-700">Throttled</span>
+            {% endif %}
+        </div>
+        {% if traffic.limit_gb and traffic.limit_gb > 0 %}
+        <div id="traffic-limit-pct" class="text-xl font-bold {% if traffic.limit_used_pct >= 90 %}text-red-400{% elif traffic.limit_used_pct >= 70 %}text-yellow-400{% else %}text-white{% endif %}">{{ traffic.limit_used_pct }}%</div>
+        <div class="w-full bg-dark-600 rounded-full h-2 mt-2">
+            <div id="traffic-limit-bar" class="h-2 rounded-full transition-all {% if traffic.limit_used_pct >= 90 %}bg-red-500{% elif traffic.limit_used_pct >= 70 %}bg-yellow-500{% else %}bg-indigo-500{% endif %}" style="width: {{ traffic.limit_used_pct }}%"></div>
+        </div>
+        <p class="text-dark-400 text-xs mt-1">of {{ traffic.limit_gb }} GB</p>
+        {% else %}
+        <div class="text-xl font-bold text-dark-400">No limit</div>
+        <p class="text-dark-400 text-xs mt-1">set in settings</p>
+        {% endif %}
+    </div>
+</div>
+
 <!-- Controls + Connection Info -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
     <div class="card rounded-xl p-5">
@@ -131,6 +180,25 @@
 </div>
 
 <script>
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const k = 1024;
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const idx = Math.min(i, units.length - 1);
+    return parseFloat((bytes / Math.pow(k, idx)).toFixed(2)) + ' ' + units[idx];
+}
+
+// Format initial traffic values
+document.addEventListener('DOMContentLoaded', function() {
+    const rxEl = document.getElementById('traffic-rx');
+    const txEl = document.getElementById('traffic-tx');
+    const totalEl = document.getElementById('traffic-total');
+    if (rxEl) rxEl.textContent = formatBytes(parseInt(rxEl.textContent) || 0);
+    if (txEl) txEl.textContent = formatBytes(parseInt(txEl.textContent) || 0);
+    if (totalEl) totalEl.textContent = formatBytes(parseInt(totalEl.textContent) || 0);
+});
+
 // Live status refresh
 setInterval(async () => {
     try {
@@ -155,6 +223,39 @@ setInterval(async () => {
                 total += v.current || 0;
             }
             document.getElementById('conn-count').textContent = total;
+        }
+        // Update traffic
+        if (data.traffic) {
+            const t = data.traffic;
+            const rxEl = document.getElementById('traffic-rx');
+            const txEl = document.getElementById('traffic-tx');
+            const totalEl = document.getElementById('traffic-total');
+            if (rxEl) rxEl.textContent = formatBytes(t.rx_bytes || 0);
+            if (txEl) txEl.textContent = formatBytes(t.tx_bytes || 0);
+            if (totalEl) totalEl.textContent = formatBytes((t.rx_bytes || 0) + (t.tx_bytes || 0));
+
+            const pctEl = document.getElementById('traffic-limit-pct');
+            const barEl = document.getElementById('traffic-limit-bar');
+            if (pctEl && t.limit_gb > 0) {
+                pctEl.textContent = t.limit_used_pct + '%';
+                if (t.limit_used_pct >= 90) {
+                    pctEl.className = 'text-xl font-bold text-red-400';
+                } else if (t.limit_used_pct >= 70) {
+                    pctEl.className = 'text-xl font-bold text-yellow-400';
+                } else {
+                    pctEl.className = 'text-xl font-bold text-white';
+                }
+            }
+            if (barEl && t.limit_gb > 0) {
+                barEl.style.width = t.limit_used_pct + '%';
+                if (t.limit_used_pct >= 90) {
+                    barEl.className = 'h-2 rounded-full transition-all bg-red-500';
+                } else if (t.limit_used_pct >= 70) {
+                    barEl.className = 'h-2 rounded-full transition-all bg-yellow-500';
+                } else {
+                    barEl.className = 'h-2 rounded-full transition-all bg-indigo-500';
+                }
+            }
         }
     } catch(e) {}
 }, 5000);

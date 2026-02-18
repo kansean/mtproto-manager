@@ -10,6 +10,8 @@
 - **Ссылки** — автоматическая генерация `tg://` и `t.me/proxy` ссылок
 - **Fake TLS** — маскировка трафика под обычный HTTPS (domain fronting)
 - **Мониторинг** — статус прокси, количество подключений, логи контейнера в реальном времени
+- **Мониторинг трафика** — отслеживание входящего/исходящего трафика через Docker API с персистентным хранением
+- **Лимит трафика** — глобальный лимит (ГБ) со снижением скорости (`tc`) при превышении
 - **Безопасность** — аутентификация с хешированием PBKDF2, CSRF-защита, rate limiting
 - **Docker** — полное развёртывание через Docker Compose (app + nginx + certbot)
 - **SSL** — опциональный HTTPS с автоматическим получением сертификата Let's Encrypt
@@ -55,11 +57,12 @@ curl -sSL https://raw.githubusercontent.com/kansean/mtproto-manager/master/insta
 4. Настроит Docker для LXC-окружений (отключение AppArmor)
 5. Проверит работоспособность Docker (`hello-world`)
 6. Скачает последнюю версию проекта
-7. Спросит домен, порт прокси и нужен ли HTTPS
-8. Получит SSL-сертификат (если выбран HTTPS)
-9. Откроет нужные порты в файрволе (UFW/firewalld)
-10. Запустит все сервисы через Docker Compose
-11. Выведет учётные данные администратора и URL для доступа
+7. Соберёт кастомный Docker-образ `mtg-custom` (mtg + iproute2 для контроля трафика)
+8. Спросит домен, порт прокси и нужен ли HTTPS
+9. Получит SSL-сертификат (если выбран HTTPS)
+10. Откроет нужные порты в файрволе (UFW/firewalld)
+11. Запустит все сервисы через Docker Compose
+12. Выведет учётные данные администратора и URL для доступа
 
 ## Ручная установка
 
@@ -91,7 +94,8 @@ grep -E "admin_username|_initial_password" /opt/mtproto/data/config.json
 │   ├── app.py              # Flask-приложение (маршруты, аутентификация)
 │   ├── config.py           # Конфигурация (загрузка/сохранение JSON)
 │   ├── services/
-│   │   └── mtproto.py      # Работа с Docker API и mtg-контейнерами
+│   │   ├── mtproto.py      # Работа с Docker API и mtg-контейнерами
+│   │   └── traffic.py      # Мониторинг трафика, лимиты и throttling
 │   ├── templates/          # HTML-шаблоны (Jinja2 + Tailwind CSS)
 │   │   ├── base.html       # Базовый шаблон с навигацией
 │   │   ├── dashboard.html  # Дашборд со статусом прокси
@@ -104,9 +108,11 @@ grep -E "admin_username|_initial_password" /opt/mtproto/data/config.json
 │   ├── default.conf        # Конфиг nginx (HTTP)
 │   └── ssl.conf.template   # Шаблон конфига nginx (HTTPS)
 ├── data/                   # Данные приложения (не в git)
-│   └── config.json         # Конфигурация и список пользователей
+│   ├── config.json         # Конфигурация и список пользователей
+│   └── traffic.json        # Накопленные счётчики трафика
 ├── docker-compose.yml      # Описание сервисов (app + nginx + certbot)
 ├── Dockerfile              # Сборка образа Flask-приложения
+├── Dockerfile.mtg          # Кастомный образ mtg с iproute2 (для tc)
 ├── requirements.txt        # Python-зависимости
 ├── wsgi.py                 # Точка входа WSGI (gunicorn)
 ├── install.sh              # Скрипт установки
@@ -130,10 +136,12 @@ grep -E "admin_username|_initial_password" /opt/mtproto/data/config.json
 - **admin_username / admin_password_hash** — учётные данные администратора
 - **server_domain / server_ip** — адрес сервера для генерации ссылок
 - **proxy_port** — порт MTProto прокси (по умолчанию `2443`)
-- **proxy_image** — Docker-образ mtg (по умолчанию `nineseconds/mtg:2`)
+- **proxy_image** — Docker-образ mtg (по умолчанию `mtg-custom`)
 - **users** — список пользователей с секретными ключами
 - **fake_tls_domain** — домен для маскировки TLS-трафика
 - **stats_enabled** — включить сбор статистики (порт 3129)
+- **traffic_limit_gb** — лимит трафика в ГБ (`0` = без лимита)
+- **throttle_speed_mbps** — скорость при превышении лимита (Мбит/с, по умолчанию `1`)
 
 Все настройки можно изменить через веб-интерфейс в разделе **Settings**.
 
@@ -185,8 +193,9 @@ bash /opt/mtproto/update.sh
 cd /opt/mtproto
 docker compose --profile ssl down --rmi all --volumes 2>/dev/null; docker compose down --rmi all --volumes
 
-# Удалить mtg-proxy контейнер (создаётся приложением динамически)
+# Удалить mtg-proxy контейнер и кастомный образ
 docker rm -f mtg-proxy 2>/dev/null
+docker rmi mtg-custom 2>/dev/null
 
 # Удалить файлы проекта
 rm -rf /opt/mtproto
@@ -201,9 +210,9 @@ docker image prune -f
 
 ### Страницы
 
-- **Dashboard** — статус прокси, порт, количество пользователей, управление запуском
+- **Dashboard** — статус прокси, порт, количество пользователей, трафик (вход/выход/лимит), управление запуском
 - **Users** — список пользователей с ключами, ссылками `t.me/proxy`, QR-кодами
-- **Settings** — домен, IP, порт прокси, Fake TLS домен, proxy tag, смена пароля
+- **Settings** — домен, IP, порт прокси, Fake TLS домен, proxy tag, лимиты трафика, смена пароля
 - **Logs** — просмотр логов mtg-контейнера с автообновлением
 
 ### Логи (страница Logs)
@@ -225,6 +234,19 @@ docker image prune -f
 - IP-адреса пользователей
 
 > Пустые логи после запуска прокси — **нормально**. Это означает, что прокси работает штатно. Записи появятся при возникновении ошибок.
+
+### Мониторинг трафика
+
+Трафик отслеживается через Docker API (`container.stats()`), данные о сетевых интерфейсах контейнера (`rx_bytes` / `tx_bytes`). Фоновый поток опрашивает Docker каждые 10 секунд и накапливает дельту в `data/traffic.json`.
+
+**Особенности:**
+- **Персистентное хранение** — счётчики сохраняются на диск и не сбрасываются при перезапуске контейнера или приложения
+- **Дельта-логика** — если счётчик Docker стал меньше предыдущего (контейнер перезапустился), базовая точка сбрасывается в 0
+- **Лимит трафика** — при превышении заданного лимита (ГБ) применяется ограничение скорости через `tc` (traffic control)
+- **Throttling** — используется `tc qdisc tbf` внутри mtg-контейнера (требуется кастомный образ `mtg-custom` с `iproute2`)
+- **Сброс счётчиков** — кнопка "Reset Traffic Counter" в Settings обнуляет счётчики и снимает throttle
+
+> Для работы throttling необходим кастомный Docker-образ `mtg-custom`, который собирается автоматически при установке из `Dockerfile.mtg`.
 
 ### Первый вход
 

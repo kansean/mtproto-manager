@@ -1,9 +1,13 @@
 """Generate nginx stream/http configs for port 443 SNI routing."""
 
 import os
-import subprocess
+import logging
+
+import docker
 
 from app.config import DATA_DIR
+
+logger = logging.getLogger(__name__)
 
 NGINX_DATA_DIR = os.path.join(DATA_DIR, "nginx")
 CONF_D_DIR = os.path.join(NGINX_DATA_DIR, "conf.d")
@@ -175,14 +179,21 @@ server {{
 
 
 def reload_nginx():
-    """Reload nginx config via docker exec."""
+    """Reload nginx config via Docker SDK exec."""
     try:
-        subprocess.run(
-            ["docker", "exec", "mtproto-nginx", "nginx", "-s", "reload"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except Exception:
-        pass
+        client = docker.from_env()
+        nginx = client.containers.get("mtproto-nginx")
+        result = nginx.exec_run("nginx -s reload")
+        exit_code = result.exit_code if hasattr(result, 'exit_code') else result[0]
+        if exit_code != 0:
+            output = result.output if hasattr(result, 'output') else result[1]
+            logger.warning("nginx reload failed (exit %s): %s", exit_code, output)
+        else:
+            logger.info("nginx reloaded")
+    except docker.errors.NotFound:
+        logger.warning("nginx container 'mtproto-nginx' not found, cannot reload")
+    except Exception as e:
+        logger.warning("Failed to reload nginx: %s", e)
 
 
 def apply_port_443_mode(cfg):

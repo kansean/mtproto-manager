@@ -173,13 +173,15 @@
             {% if cfg.port_443_mode %}
             <div class="mb-4">
                 <label class="block text-sm font-medium text-dark-200 mb-1.5">SNI Domain</label>
-                <select name="fake_tls_domain" id="settings-ftd"
-                    class="w-full px-3.5 py-2.5 bg-dark-700 border border-dark-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                <input type="text" name="fake_tls_domain" id="settings-ftd" list="domain-pool"
+                    class="w-full px-3.5 py-2.5 bg-dark-700 border border-dark-500 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    placeholder="Choose from list or type custom domain">
+                <datalist id="domain-pool">
                     {% for d in domain_pool %}
-                    <option value="{{ d }}">{{ d }}{% if d in used_domains %} (in use){% endif %}</option>
+                    <option value="{{ d }}">{% if d in used_domains %}(in use){% endif %}</option>
                     {% endfor %}
-                </select>
-                <p class="text-dark-400 text-xs mt-1">Changing domain will regenerate the secret and restart the proxy</p>
+                </datalist>
+                <p class="text-dark-400 text-xs mt-1">Choose from pool or type any domain. Changing domain will regenerate the secret and restart the proxy.</p>
             </div>
             {% endif %}
 

@@ -7,6 +7,7 @@ DATA_DIR = os.environ.get("MTPROTO_DATA_DIR", "/opt/mtproto/data")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
 FAKE_TLS_DOMAIN_POOL = [
+    # International — major CDNs and services
     "www.cloudflare.com",
     "www.google.com",
     "www.apple.com",
@@ -27,6 +28,17 @@ FAKE_TLS_DOMAIN_POOL = [
     "www.spotify.com",
     "www.twitch.tv",
     "www.discord.com",
+    # Russian — ISPs will never block these
+    "vk.com",
+    "ya.ru",
+    "mail.ru",
+    "ok.ru",
+    "yandex.ru",
+    "dzen.ru",
+    "rutube.ru",
+    "sber.ru",
+    "gosuslugi.ru",
+    "mos.ru",
 ]
 
 DEFAULT_CONFIG = {

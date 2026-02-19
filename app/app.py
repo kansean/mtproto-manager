@@ -310,9 +310,14 @@ def create_app():
 
         # --- SNI domain change (only in port_443_mode) ---
         if cfg.get("port_443_mode", False):
-            new_domain = request.form.get("fake_tls_domain", "").strip()
+            new_domain = request.form.get("fake_tls_domain", "").strip().lower()
             old_domain = user.get("fake_tls_domain", "")
             if new_domain and new_domain != old_domain:
+                # Validate domain format
+                import re
+                if not re.match(r'^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+$', new_domain):
+                    flash("Invalid domain format", "error")
+                    return redirect(url_for("users_list"))
                 # Validate uniqueness
                 used_by_others = {
                     u.get("fake_tls_domain") for i2, u in enumerate(users)

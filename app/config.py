@@ -6,6 +6,29 @@ import tempfile
 DATA_DIR = os.environ.get("MTPROTO_DATA_DIR", "/opt/mtproto/data")
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
+FAKE_TLS_DOMAIN_POOL = [
+    "www.cloudflare.com",
+    "www.google.com",
+    "www.apple.com",
+    "www.microsoft.com",
+    "www.amazon.com",
+    "www.facebook.com",
+    "www.instagram.com",
+    "www.twitter.com",
+    "www.youtube.com",
+    "www.netflix.com",
+    "www.linkedin.com",
+    "www.github.com",
+    "www.stackoverflow.com",
+    "www.reddit.com",
+    "www.wikipedia.org",
+    "www.mozilla.org",
+    "www.dropbox.com",
+    "www.spotify.com",
+    "www.twitch.tv",
+    "www.discord.com",
+]
+
 DEFAULT_CONFIG = {
     "admin_username": "admin",
     "admin_password_hash": "",
@@ -23,6 +46,7 @@ DEFAULT_CONFIG = {
     "stats_enabled": True,
     "traffic_limit_gb": 0,
     "throttle_speed_mbps": 1,
+    "port_443_mode": False,
 }
 
 

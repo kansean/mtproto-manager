@@ -315,9 +315,13 @@ setup_ssl() {
         -d "$DOMAIN"
 
     if [ $? -eq 0 ]; then
-        # Swap nginx config to SSL version
+        # Swap nginx config to SSL version — write to data/nginx/conf.d
+        mkdir -p "$INSTALL_DIR/data/nginx/conf.d"
+        mkdir -p "$INSTALL_DIR/data/nginx/stream.d"
         sed "s/__DOMAIN__/${DOMAIN}/g" "$INSTALL_DIR/nginx/ssl.conf.template" \
-            > "$INSTALL_DIR/nginx/default.conf"
+            > "$INSTALL_DIR/data/nginx/conf.d/default.conf"
+        # Also keep legacy copy for backwards compat
+        cp "$INSTALL_DIR/data/nginx/conf.d/default.conf" "$INSTALL_DIR/nginx/default.conf"
         ok "SSL certificate obtained and nginx configured"
     else
         warn "SSL certificate request failed. Continuing with HTTP only."
@@ -364,6 +368,13 @@ build_mtg_image() {
 start_services() {
     info "Building and starting services..."
     cd "$INSTALL_DIR"
+
+    # Ensure nginx config directories exist and seed default config
+    mkdir -p "$INSTALL_DIR/data/nginx/conf.d"
+    mkdir -p "$INSTALL_DIR/data/nginx/stream.d"
+    if [ ! -f "$INSTALL_DIR/data/nginx/conf.d/default.conf" ] && [ -f "$INSTALL_DIR/nginx/default.conf" ]; then
+        cp "$INSTALL_DIR/nginx/default.conf" "$INSTALL_DIR/data/nginx/conf.d/default.conf"
+    fi
 
     COMPOSE_PROFILES=""
     if [[ "$ENABLE_SSL" =~ ^[Yy]$ ]]; then

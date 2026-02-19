@@ -1,0 +1,7 @@
+FROM nginx:alpine
+# Install stream module for SNI-based routing on port 443.
+# nginx:alpine may not include ngx_stream_module as a dynamic .so,
+# so we install Alpine's nginx-mod-stream to guarantee availability.
+RUN apk add --no-cache nginx-mod-stream
+# Verify the module file exists at the expected path
+RUN test -f /usr/lib/nginx/modules/ngx_stream_module.so

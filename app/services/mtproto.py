@@ -151,16 +151,31 @@ def _start_user_container(client, cfg, user, image):
         "--concurrency", "4096",
     ]
 
-    ports_map = {f"{port}/tcp": ("0.0.0.0", port)}
+    port_443_mode = cfg.get("port_443_mode", False)
 
-    container = client.containers.run(
-        image,
-        command=command,
-        name=container_name,
-        ports=ports_map,
-        restart_policy={"Name": "unless-stopped"},
-        detach=True,
-    )
+    if port_443_mode:
+        # In port 443 mode: attach to shared network, no host port binding.
+        # Nginx stream block routes traffic via SNI to the container by name.
+        network_name = "mtproto-manager_mtproto-net"
+        container = client.containers.run(
+            image,
+            command=command,
+            name=container_name,
+            network=network_name,
+            restart_policy={"Name": "unless-stopped"},
+            detach=True,
+        )
+    else:
+        # Standard mode: bind host port directly
+        ports_map = {f"{port}/tcp": ("0.0.0.0", port)}
+        container = client.containers.run(
+            image,
+            command=command,
+            name=container_name,
+            ports=ports_map,
+            restart_policy={"Name": "unless-stopped"},
+            detach=True,
+        )
 
     time.sleep(2)
     container.reload()
@@ -292,7 +307,9 @@ def generate_tg_link(secret, cfg=None, port=None):
     if cfg is None:
         cfg = load_config()
     server = cfg.get("server_domain") or cfg.get("server_ip", "")
-    if port is None:
+    if cfg.get("port_443_mode", False):
+        port = 443
+    elif port is None:
         port = cfg.get("proxy_port", 2443)
     return f"tg://proxy?server={server}&port={port}&secret={secret}"
 
@@ -301,7 +318,9 @@ def generate_tme_link(secret, cfg=None, port=None):
     if cfg is None:
         cfg = load_config()
     server = cfg.get("server_domain") or cfg.get("server_ip", "")
-    if port is None:
+    if cfg.get("port_443_mode", False):
+        port = 443
+    elif port is None:
         port = cfg.get("proxy_port", 2443)
     return f"https://t.me/proxy?server={server}&port={port}&secret={secret}"
 

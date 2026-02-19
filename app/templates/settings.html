@@ -83,6 +83,29 @@
         </div>
     </div>
 
+    <!-- Port 443 Mode (SNI Routing) -->
+    <div class="card rounded-xl p-5">
+        <h3 class="text-white font-semibold mb-4 flex items-center gap-2">
+            <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+            Port 443 Mode (SNI Routing)
+            {% if cfg.port_443_mode %}
+            <span class="px-2 py-0.5 bg-green-900/50 text-green-400 text-xs rounded-full border border-green-800">Active</span>
+            {% endif %}
+        </h3>
+        <div class="flex items-center gap-3 mb-3">
+            <input type="checkbox" name="port_443_mode" id="port_443_mode"
+                {% if cfg.port_443_mode %}checked{% endif %}
+                class="w-4 h-4 text-indigo-600 bg-dark-700 border-dark-500 rounded focus:ring-indigo-500">
+            <label for="port_443_mode" class="text-sm text-dark-200">Route all proxy traffic through port 443 via SNI</label>
+        </div>
+        <div class="bg-yellow-900/20 border border-yellow-800/50 rounded-lg p-3 mt-2">
+            <p class="text-yellow-300/80 text-xs">
+                Toggling this setting will <strong>regenerate all user secrets</strong> and invalidate existing connection links.
+                Each user will get a unique SNI domain for routing. Requires SSL certificate.
+            </p>
+        </div>
+    </div>
+
     <!-- Traffic Limits -->
     <div class="card rounded-xl p-5">
         <h3 class="text-white font-semibold mb-4 flex items-center gap-2">

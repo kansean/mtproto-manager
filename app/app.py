@@ -13,7 +13,7 @@ from flask import (
 )
 import qrcode
 
-from app.config import load_config, save_config, get_or_create_secret_key, next_available_port, DATA_DIR
+from app.config import load_config, save_config, get_or_create_secret_key, next_available_port, DATA_DIR, FAKE_TLS_DOMAIN_POOL
 from app.services.mtproto import (
     generate_secret, get_proxy_status, start_proxy, stop_proxy,
     restart_proxy, get_proxy_logs, get_proxy_stats,
@@ -22,6 +22,7 @@ from app.services.mtproto import (
 from app.services.traffic import (
     start_traffic_monitor, get_traffic_summary, reset_traffic_data
 )
+from app.services.nginx_config import bootstrap_nginx_configs, apply_port_443_mode
 
 # Simple in-memory rate limiter for login
 _login_attempts = {}  # ip -> (count, first_attempt_time)
@@ -93,6 +94,13 @@ def create_app():
 
     init_config()
     start_traffic_monitor()
+
+    # Bootstrap nginx config directories and migrate legacy configs
+    try:
+        cfg_boot = load_config()
+        bootstrap_nginx_configs(cfg_boot)
+    except Exception:
+        pass
 
     # --- CSRF ---
     @app.before_request
@@ -195,9 +203,23 @@ def create_app():
             flash("Name is required", "error")
             return redirect(url_for("users_list"))
 
-        fake_tls = cfg.get("fake_tls_domain", "google.com")
-        secret = generate_secret(fake_tls)
         port = next_available_port(cfg)
+        port_443_mode = cfg.get("port_443_mode", False)
+
+        if port_443_mode:
+            # Pick an unused fake_tls_domain from the pool
+            used_domains = {u.get("fake_tls_domain") for u in cfg.get("users", []) if u.get("fake_tls_domain")}
+            available = [d for d in FAKE_TLS_DOMAIN_POOL if d not in used_domains]
+            if not available:
+                flash("No more SNI domains available in the pool", "error")
+                return redirect(url_for("users_list"))
+            user_ftd = available[0]
+            secret = generate_secret(user_ftd)
+        else:
+            user_ftd = None
+            fake_tls = cfg.get("fake_tls_domain", "www.cloudflare.com")
+            secret = generate_secret(fake_tls)
+
         user = {
             "name": name,
             "secret": secret,
@@ -205,6 +227,9 @@ def create_app():
             "port": port,
             "created_at": datetime.datetime.now().isoformat(),
         }
+        if user_ftd:
+            user["fake_tls_domain"] = user_ftd
+
         cfg.setdefault("users", []).append(user)
         save_config(cfg)
         flash(f"User '{name}' added", "success")
@@ -212,6 +237,8 @@ def create_app():
         status = get_proxy_status()
         if status.get("running"):
             restart_proxy()
+            if port_443_mode:
+                apply_port_443_mode(cfg)
             flash("Proxy restarted to apply changes", "info")
 
         return redirect(url_for("users_list"))
@@ -227,6 +254,8 @@ def create_app():
             status = get_proxy_status()
             if status.get("running"):
                 restart_proxy()
+                if cfg.get("port_443_mode", False):
+                    apply_port_443_mode(cfg)
             state = "enabled" if users[idx]["enabled"] else "disabled"
             flash(f"User '{users[idx]['name']}' {state}", "success")
         return redirect(url_for("users_list"))
@@ -243,6 +272,8 @@ def create_app():
             status = get_proxy_status()
             if status.get("running"):
                 restart_proxy()
+                if cfg.get("port_443_mode", False):
+                    apply_port_443_mode(cfg)
             flash(f"User '{name}' deleted", "success")
         return redirect(url_for("users_list"))
 
@@ -266,6 +297,9 @@ def create_app():
     def proxy_start():
         result = start_proxy()
         if result.get("success"):
+            cfg = load_config()
+            if cfg.get("port_443_mode", False):
+                apply_port_443_mode(cfg)
             rc = result.get("running_count", 0)
             tc = result.get("total_count", 0)
             flash(f"Proxy started ({rc}/{tc} containers)", "success")
@@ -290,6 +324,9 @@ def create_app():
     def proxy_restart():
         result = restart_proxy()
         if result.get("success"):
+            cfg = load_config()
+            if cfg.get("port_443_mode", False):
+                apply_port_443_mode(cfg)
             rc = result.get("running_count", 0)
             tc = result.get("total_count", 0)
             flash(f"Proxy restarted ({rc}/{tc} containers)", "success")
@@ -312,6 +349,7 @@ def create_app():
     def settings():
         cfg = load_config()
         if request.method == "POST":
+            # --- Apply ALL form fields first ---
             cfg["server_domain"] = request.form.get("server_domain", "").strip()
             cfg["server_ip"] = request.form.get("server_ip", "").strip()
 
@@ -326,7 +364,7 @@ def create_app():
                 return redirect(url_for("settings"))
 
             cfg["proxy_tag"] = request.form.get("proxy_tag", "").strip()
-            cfg["fake_tls_domain"] = request.form.get("fake_tls_domain", "google.com").strip()
+            cfg["fake_tls_domain"] = request.form.get("fake_tls_domain", "www.cloudflare.com").strip()
             cfg["proxy_buffer_size"] = request.form.get("proxy_buffer_size", "32KB").strip()
             cfg["proxy_prefer_ip"] = request.form.get("proxy_prefer_ip", "v4")
             cfg["stats_enabled"] = "stats_enabled" in request.form
@@ -354,6 +392,53 @@ def create_app():
             new_username = request.form.get("admin_username", "").strip()
             if new_username:
                 cfg["admin_username"] = new_username
+
+            # --- Port 443 mode toggle (after all other fields applied) ---
+            new_port_443_mode = "port_443_mode" in request.form
+            old_port_443_mode = cfg.get("port_443_mode", False)
+
+            if new_port_443_mode != old_port_443_mode:
+                # Validate: need SSL cert to enable port 443 mode
+                if new_port_443_mode:
+                    domain = cfg.get("server_domain", "")
+                    if not domain:
+                        flash("Port 443 mode requires a server domain", "error")
+                        return redirect(url_for("settings"))
+                    cert_dir = os.path.join(DATA_DIR, "..", "certbot", "conf", "live", domain)
+                    cert_dir = os.path.normpath(cert_dir)
+                    if not os.path.isdir(cert_dir):
+                        flash("Port 443 mode requires SSL certificate. Set up HTTPS first.", "error")
+                        return redirect(url_for("settings"))
+
+                cfg["port_443_mode"] = new_port_443_mode
+                users = cfg.get("users", [])
+
+                if new_port_443_mode:
+                    # Assign per-user fake_tls_domain from pool
+                    for i, user in enumerate(users):
+                        if i < len(FAKE_TLS_DOMAIN_POOL):
+                            ftd = FAKE_TLS_DOMAIN_POOL[i]
+                            user["fake_tls_domain"] = ftd
+                            user["secret"] = generate_secret(ftd)
+                        else:
+                            flash(f"Not enough SNI domains for user '{user['name']}'", "warning")
+                else:
+                    # Disable: clear per-user fake_tls_domain, regenerate with global domain
+                    global_ftd = cfg.get("fake_tls_domain", "www.cloudflare.com")
+                    for user in users:
+                        user.pop("fake_tls_domain", None)
+                        user["secret"] = generate_secret(global_ftd)
+
+                flash("Port 443 mode " + ("enabled" if new_port_443_mode else "disabled") + ". All user secrets have been regenerated — share new links!", "warning")
+
+                save_config(cfg)
+
+                status = get_proxy_status()
+                if status.get("running"):
+                    restart_proxy()
+                apply_port_443_mode(cfg)
+
+                return redirect(url_for("settings"))
 
             save_config(cfg)
             flash("Settings saved", "success")

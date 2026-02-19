@@ -82,11 +82,21 @@ cp "$TEMP_DIR/.dockerignore" "$INSTALL_DIR/"
 [ -f "$TEMP_DIR/update.sh" ] && cp "$TEMP_DIR/update.sh" "$INSTALL_DIR/"
 [ -f "$TEMP_DIR/Dockerfile.mtg" ] && cp "$TEMP_DIR/Dockerfile.mtg" "$INSTALL_DIR/"
 
-# Preserve SSL nginx config if it was customized
+# Update nginx build files and config template
 if [ -f "$TEMP_DIR/nginx/ssl.conf.template" ]; then
     cp "$TEMP_DIR/nginx/ssl.conf.template" "$INSTALL_DIR/nginx/"
 fi
-# Don't overwrite default.conf — user may have SSL config in place
+[ -f "$TEMP_DIR/nginx/Dockerfile.nginx" ] && cp "$TEMP_DIR/nginx/Dockerfile.nginx" "$INSTALL_DIR/nginx/"
+[ -f "$TEMP_DIR/nginx/nginx.conf" ] && cp "$TEMP_DIR/nginx/nginx.conf" "$INSTALL_DIR/nginx/"
+
+# Migrate nginx config to data/nginx/conf.d if needed
+mkdir -p "$INSTALL_DIR/data/nginx/conf.d"
+mkdir -p "$INSTALL_DIR/data/nginx/stream.d"
+if [ ! -f "$INSTALL_DIR/data/nginx/conf.d/default.conf" ] && [ -f "$INSTALL_DIR/nginx/default.conf" ]; then
+    info "Migrating nginx config to data/nginx/conf.d..."
+    cp "$INSTALL_DIR/nginx/default.conf" "$INSTALL_DIR/data/nginx/conf.d/default.conf"
+    ok "Nginx config migrated"
+fi
 
 rm -rf "$TEMP_DIR"
 ok "Files updated"

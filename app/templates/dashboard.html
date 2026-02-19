@@ -31,7 +31,9 @@
             <svg class="w-5 h-5 text-dark-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>
         </div>
         <div class="text-xl font-bold text-white">
-            {% if ports|length > 1 %}
+            {% if cfg.port_443_mode %}
+                443 <span class="text-sm font-normal text-dark-300">(SNI)</span>
+            {% elif ports|length > 1 %}
                 {{ ports|min }}-{{ ports|max }}
             {% elif ports|length == 1 %}
                 {{ ports[0] }}
@@ -184,7 +186,7 @@
         <div class="space-y-3">
             <div class="flex justify-between items-center">
                 <span class="text-dark-300 text-sm">Server</span>
-                <span class="text-white text-sm font-mono">{{ cfg.server_domain or cfg.server_ip }}:{% if ports|length > 1 %}{{ ports|min }}-{{ ports|max }}{% elif ports|length == 1 %}{{ ports[0] }}{% else %}{{ cfg.proxy_port }}{% endif %}</span>
+                <span class="text-white text-sm font-mono">{{ cfg.server_domain or cfg.server_ip }}:{% if cfg.port_443_mode %}443 (SNI){% elif ports|length > 1 %}{{ ports|min }}-{{ ports|max }}{% elif ports|length == 1 %}{{ ports[0] }}{% else %}{{ cfg.proxy_port }}{% endif %}</span>
             </div>
             <div class="flex justify-between items-center">
                 <span class="text-dark-300 text-sm">IP</span>
@@ -216,7 +218,7 @@
                 {% if cfg.server_domain %}
                 <li>DNS: <strong>{{ cfg.server_domain }}</strong> must point to <strong>{{ cfg.server_ip }}</strong></li>
                 {% endif %}
-                <li>MTProto proxy port{% if ports|length > 1 %}s{% endif %}: <strong>{% if ports|length > 1 %}{{ ports|min }}-{{ ports|max }}{% elif ports|length == 1 %}{{ ports[0] }}{% else %}{{ cfg.proxy_port }}{% endif %}</strong></li>
+                <li>MTProto proxy port{% if ports|length > 1 and not cfg.port_443_mode %}s{% endif %}: <strong>{% if cfg.port_443_mode %}443 (SNI routing){% elif ports|length > 1 %}{{ ports|min }}-{{ ports|max }}{% elif ports|length == 1 %}{{ ports[0] }}{% else %}{{ cfg.proxy_port }}{% endif %}</strong></li>
             </ul>
         </div>
     </div>

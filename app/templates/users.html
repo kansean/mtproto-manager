@@ -37,8 +37,11 @@
                     {% else %}
                     <span class="px-2 py-0.5 bg-red-900/50 text-red-400 text-xs rounded-full border border-red-800">Disabled</span>
                     {% endif %}
+                    {% if user.fake_tls_domain and cfg.port_443_mode %}
+                    <span class="px-2 py-0.5 bg-cyan-900/50 text-cyan-400 text-xs rounded-full border border-cyan-800">SNI: {{ user.fake_tls_domain }}</span>
+                    {% endif %}
                     {% if user.port %}
-                    <span class="px-2 py-0.5 bg-indigo-900/50 text-indigo-400 text-xs rounded-full border border-indigo-800">Port: {{ user.port }}</span>
+                    <span class="px-2 py-0.5 bg-indigo-900/50 text-indigo-400 text-xs rounded-full border border-indigo-800">{% if cfg.port_443_mode %}Port: 443{% else %}Port: {{ user.port }}{% endif %}</span>
                     {% set ut = traffic_per_user.get(user.port) %}
                     {% if ut %}
                     {% set total = ut.rx_bytes + ut.tx_bytes %}

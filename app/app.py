@@ -192,7 +192,13 @@ def create_app():
             user["tme_link"] = generate_tme_link(user["secret"], cfg, port=user.get("port"))
         traffic = get_traffic_summary()
         traffic_per_user = {e["port"]: e for e in traffic.get("per_user", [])}
-        return render_template("users.html", users=users, cfg=cfg, traffic_per_user=traffic_per_user)
+        used_domains = {u.get("fake_tls_domain") for u in users if u.get("fake_tls_domain")}
+        return render_template(
+            "users.html", users=users, cfg=cfg,
+            traffic_per_user=traffic_per_user,
+            domain_pool=FAKE_TLS_DOMAIN_POOL,
+            used_domains=used_domains,
+        )
 
     @app.route("/users/add", methods=["POST"])
     @login_required
@@ -275,6 +281,62 @@ def create_app():
                 if cfg.get("port_443_mode", False):
                     apply_port_443_mode(cfg)
             flash(f"User '{name}' deleted", "success")
+        return redirect(url_for("users_list"))
+
+    @app.route("/users/<int:idx>/settings", methods=["POST"])
+    @login_required
+    def user_settings(idx):
+        cfg = load_config()
+        users = cfg.get("users", [])
+        if not (0 <= idx < len(users)):
+            flash("User not found", "error")
+            return redirect(url_for("users_list"))
+
+        user = users[idx]
+
+        # --- Per-user traffic limit ---
+        try:
+            traffic_limit = float(request.form.get("traffic_limit_gb", "0"))
+            user["traffic_limit_gb"] = max(traffic_limit, 0)
+        except (ValueError, TypeError):
+            pass
+
+        # --- Per-user throttle speed ---
+        try:
+            throttle_speed = float(request.form.get("throttle_speed_mbps", "0"))
+            user["throttle_speed_mbps"] = max(throttle_speed, 0)
+        except (ValueError, TypeError):
+            pass
+
+        # --- SNI domain change (only in port_443_mode) ---
+        if cfg.get("port_443_mode", False):
+            new_domain = request.form.get("fake_tls_domain", "").strip()
+            old_domain = user.get("fake_tls_domain", "")
+            if new_domain and new_domain != old_domain:
+                # Validate uniqueness
+                used_by_others = {
+                    u.get("fake_tls_domain") for i2, u in enumerate(users)
+                    if i2 != idx and u.get("fake_tls_domain")
+                }
+                if new_domain in used_by_others:
+                    flash(f"Domain {new_domain} is already used by another user", "error")
+                    return redirect(url_for("users_list"))
+
+                user["fake_tls_domain"] = new_domain
+                user["secret"] = generate_secret(new_domain)
+                save_config(cfg)
+
+                status = get_proxy_status()
+                if status.get("running"):
+                    restart_proxy()
+                    apply_port_443_mode(cfg)
+                    flash(f"Domain changed to {new_domain}, proxy restarted. Share new link!", "warning")
+                else:
+                    flash(f"Domain changed to {new_domain}. Share new link!", "warning")
+                return redirect(url_for("users_list"))
+
+        save_config(cfg)
+        flash(f"Settings for '{user['name']}' saved", "success")
         return redirect(url_for("users_list"))
 
     @app.route("/users/<int:idx>/qr")

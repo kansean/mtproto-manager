@@ -102,6 +102,17 @@ def save_config(cfg):
         raise
 
 
+def get_user_effective_limits(user, cfg):
+    """Return (traffic_limit_gb, throttle_speed_mbps) for a user, falling back to global."""
+    traffic_limit = user.get("traffic_limit_gb", 0)
+    if not traffic_limit or traffic_limit <= 0:
+        traffic_limit = cfg.get("traffic_limit_gb", 0)
+    throttle_speed = user.get("throttle_speed_mbps", 0)
+    if not throttle_speed or throttle_speed <= 0:
+        throttle_speed = cfg.get("throttle_speed_mbps", 1)
+    return traffic_limit, throttle_speed
+
+
 def get_or_create_secret_key():
     cfg = load_config()
     if not cfg.get("secret_key"):

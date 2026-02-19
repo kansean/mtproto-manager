@@ -6,7 +6,7 @@ import tempfile
 import datetime
 import logging
 
-from app.config import load_config, DATA_DIR
+from app.config import load_config, get_user_effective_limits, DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ TRAFFIC_FILE = os.path.join(DATA_DIR, "traffic.json")
 
 _lock = threading.Lock()
 _monitor_thread = None
-_throttle_active = False
+_throttled_containers = set()  # container names currently throttled
 
 
 def _port_from_container_name(name):
@@ -134,76 +134,92 @@ def _collect_stats_snapshot():
 
 
 def _check_and_enforce_limits():
-    """Check if traffic limit exceeded and apply/remove throttle."""
-    global _throttle_active
-
+    """Check per-user traffic limits and apply/remove throttle individually."""
     cfg = load_config()
-    limit_gb = cfg.get("traffic_limit_gb", 0)
-    if not limit_gb or limit_gb <= 0:
-        if _throttle_active:
-            _remove_throttle()
-        return
-
+    users = cfg.get("users", [])
     data = load_traffic_data()
-    total_bytes = data.get("rx_bytes", 0) + data.get("tx_bytes", 0)
-    limit_bytes = limit_gb * (1024 ** 3)
+    per_user_traffic = data.get("per_user", {})
 
-    if total_bytes >= limit_bytes:
-        if not _throttle_active:
-            speed_mbps = cfg.get("throttle_speed_mbps", 1)
-            _apply_throttle(speed_mbps)
-    else:
-        if _throttle_active:
-            _remove_throttle()
+    # Build port->user mapping
+    port_to_user = {}
+    for u in users:
+        p = u.get("port")
+        if p is not None:
+            port_to_user[str(p)] = u
 
-
-def _apply_throttle(speed_mbps):
-    """Apply tc rate limit inside all proxy containers."""
-    global _throttle_active
     containers = _get_containers()
-    if not containers:
-        return
+    container_by_port = {}
+    running_names = set()
+    for c in containers:
+        running_names.add(c.name)
+        port_str = _port_from_container_name(c.name)
+        if port_str:
+            container_by_port[port_str] = c
 
+    # Prune stale entries (containers that were restarted lose their tc rules)
+    stale = _throttled_containers - running_names
+    if stale:
+        _throttled_containers.difference_update(stale)
+
+    for port_str, container in container_by_port.items():
+        user = port_to_user.get(port_str)
+        if not user:
+            continue
+
+        limit_gb, speed_mbps = get_user_effective_limits(user, cfg)
+
+        if not limit_gb or limit_gb <= 0:
+            # No limit — remove throttle if active
+            if container.name in _throttled_containers:
+                _remove_throttle_from_container(container)
+            continue
+
+        counters = per_user_traffic.get(port_str, {})
+        user_bytes = counters.get("rx_bytes", 0) + counters.get("tx_bytes", 0)
+        limit_bytes = limit_gb * (1024 ** 3)
+
+        if user_bytes >= limit_bytes:
+            if container.name not in _throttled_containers:
+                _apply_throttle_to_container(container, speed_mbps)
+        else:
+            if container.name in _throttled_containers:
+                _remove_throttle_from_container(container)
+
+
+def _apply_throttle_to_container(container, speed_mbps):
+    """Apply tc rate limit inside a single proxy container."""
     rate = f"{speed_mbps}mbit"
     burst_bytes = max(int(speed_mbps * 1000000 / 8 * 0.01), 1600)
     burst = f"{burst_bytes}"
 
-    applied = False
-    for container in containers:
-        try:
-            container.exec_run("tc qdisc del dev eth0 root", demux=True)
-        except Exception:
-            pass
-        try:
-            result = container.exec_run(
-                f"tc qdisc add dev eth0 root tbf rate {rate} burst {burst} latency 50ms",
-                demux=True,
-            )
-            exit_code = result.exit_code if hasattr(result, 'exit_code') else result[0]
-            if exit_code == 0:
-                applied = True
-                logger.info("Throttle applied to %s: %s", container.name, rate)
-            else:
-                output = result.output if hasattr(result, 'output') else result[1]
-                logger.warning("Failed to apply throttle to %s (exit %s): %s", container.name, exit_code, output)
-        except Exception as e:
-            logger.warning("Failed to apply throttle to %s: %s", container.name, e)
-
-    if applied:
-        _throttle_active = True
+    try:
+        container.exec_run("tc qdisc del dev eth0 root", demux=True)
+    except Exception:
+        pass
+    try:
+        result = container.exec_run(
+            f"tc qdisc add dev eth0 root tbf rate {rate} burst {burst} latency 50ms",
+            demux=True,
+        )
+        exit_code = result.exit_code if hasattr(result, 'exit_code') else result[0]
+        if exit_code == 0:
+            _throttled_containers.add(container.name)
+            logger.info("Throttle applied to %s: %s", container.name, rate)
+        else:
+            output = result.output if hasattr(result, 'output') else result[1]
+            logger.warning("Failed to apply throttle to %s (exit %s): %s", container.name, exit_code, output)
+    except Exception as e:
+        logger.warning("Failed to apply throttle to %s: %s", container.name, e)
 
 
-def _remove_throttle():
-    """Remove tc rate limit from all proxy containers."""
-    global _throttle_active
-    containers = _get_containers()
-    for container in containers:
-        try:
-            container.exec_run("tc qdisc del dev eth0 root", demux=True)
-        except Exception:
-            pass
-    _throttle_active = False
-    logger.info("Throttle removed")
+def _remove_throttle_from_container(container):
+    """Remove tc rate limit from a single proxy container."""
+    try:
+        container.exec_run("tc qdisc del dev eth0 root", demux=True)
+    except Exception:
+        pass
+    _throttled_containers.discard(container.name)
+    logger.info("Throttle removed from %s", container.name)
 
 
 def get_traffic_summary():
@@ -219,22 +235,29 @@ def get_traffic_summary():
     else:
         limit_used_pct = 0
 
-    # Build per-user list enriched with user names from config
+    # Build per-user list enriched with user names and effective limits
     users = cfg.get("users", [])
-    port_to_name = {}
+    port_to_user = {}
     for u in users:
         p = u.get("port")
         if p is not None:
-            port_to_name[str(p)] = u.get("name", "")
+            port_to_user[str(p)] = u
 
     per_user_raw = data.get("per_user", {})
     per_user = []
     for port_str, counters in per_user_raw.items():
+        user = port_to_user.get(port_str)
+        name = user.get("name", "Unknown") if user else "Unknown"
+        eff_limit, eff_speed = get_user_effective_limits(user, cfg) if user else (limit_gb, cfg.get("throttle_speed_mbps", 1))
+        container_name = f"mtg-proxy-{port_str}"
         per_user.append({
-            "name": port_to_name.get(port_str, "Unknown"),
+            "name": name,
             "port": int(port_str),
             "rx_bytes": counters.get("rx_bytes", 0),
             "tx_bytes": counters.get("tx_bytes", 0),
+            "limit_gb": eff_limit,
+            "throttle_speed_mbps": eff_speed,
+            "throttled": container_name in _throttled_containers,
         })
     per_user.sort(key=lambda x: x["port"])
 
@@ -243,19 +266,23 @@ def get_traffic_summary():
         "tx_bytes": data.get("tx_bytes", 0),
         "limit_gb": limit_gb,
         "limit_used_pct": limit_used_pct,
-        "throttle_active": _throttle_active,
+        "throttle_active": len(_throttled_containers) > 0,
         "last_reset": data.get("last_reset", ""),
         "per_user": per_user,
     }
 
 
 def reset_traffic_data():
-    """Reset traffic counters and remove throttle."""
+    """Reset traffic counters and remove throttle from all containers."""
     data = _default_traffic()
     data["last_reset"] = datetime.datetime.now().isoformat()
     save_traffic_data(data)
-    if _throttle_active:
-        _remove_throttle()
+    if _throttled_containers:
+        containers = _get_containers()
+        for container in containers:
+            if container.name in _throttled_containers:
+                _remove_throttle_from_container(container)
+        _throttled_containers.clear()
 
 
 def _monitor_loop(interval):

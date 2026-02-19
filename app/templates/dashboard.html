@@ -123,7 +123,8 @@
                     <th class="text-left text-dark-300 font-medium py-2 pr-4">User</th>
                     <th class="text-right text-dark-300 font-medium py-2 px-4">Download</th>
                     <th class="text-right text-dark-300 font-medium py-2 px-4">Upload</th>
-                    <th class="text-right text-dark-300 font-medium py-2 pl-4">Total</th>
+                    <th class="text-right text-dark-300 font-medium py-2 px-4">Total</th>
+                    <th class="text-right text-dark-300 font-medium py-2 pl-4">Limit</th>
                 </tr>
             </thead>
             <tbody id="per-user-traffic-body">
@@ -135,7 +136,17 @@
                     </td>
                     <td class="py-2.5 px-4 text-right text-green-400 font-mono per-user-rx">{{ pu.rx_bytes }}</td>
                     <td class="py-2.5 px-4 text-right text-blue-400 font-mono per-user-tx">{{ pu.tx_bytes }}</td>
-                    <td class="py-2.5 pl-4 text-right text-white font-mono per-user-total">{{ pu.rx_bytes + pu.tx_bytes }}</td>
+                    <td class="py-2.5 px-4 text-right text-white font-mono per-user-total">{{ pu.rx_bytes + pu.tx_bytes }}</td>
+                    <td class="py-2.5 pl-4 text-right">
+                        {% if pu.limit_gb and pu.limit_gb > 0 %}
+                        <span class="text-dark-200 text-xs">{{ pu.limit_gb }} GB</span>
+                        {% else %}
+                        <span class="text-dark-500 text-xs">—</span>
+                        {% endif %}
+                        {% if pu.throttled %}
+                        <span class="ml-1 px-1.5 py-0.5 bg-red-900/50 text-red-400 text-xs rounded-full border border-red-700">Throttled</span>
+                        {% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -322,7 +333,11 @@ setInterval(async () => {
                             </td>
                             <td class="py-2.5 px-4 text-right text-green-400 font-mono">${formatBytes(pu.rx_bytes || 0)}</td>
                             <td class="py-2.5 px-4 text-right text-blue-400 font-mono">${formatBytes(pu.tx_bytes || 0)}</td>
-                            <td class="py-2.5 pl-4 text-right text-white font-mono">${formatBytes((pu.rx_bytes || 0) + (pu.tx_bytes || 0))}</td>
+                            <td class="py-2.5 px-4 text-right text-white font-mono">${formatBytes((pu.rx_bytes || 0) + (pu.tx_bytes || 0))}</td>
+                            <td class="py-2.5 pl-4 text-right">
+                                ${pu.limit_gb > 0 ? '<span class="text-dark-200 text-xs">' + pu.limit_gb + ' GB</span>' : '<span class="text-dark-500 text-xs">—</span>'}
+                                ${pu.throttled ? '<span class="ml-1 px-1.5 py-0.5 bg-red-900/50 text-red-400 text-xs rounded-full border border-red-700">Throttled</span>' : ''}
+                            </td>
                         </tr>
                     `).join('');
                 }

@@ -52,7 +52,16 @@
                     {% elif total > 0 %}
                     <span class="px-2 py-0.5 bg-purple-900/50 text-purple-400 text-xs rounded-full border border-purple-800" title="Down: {{ '%.1f'|format(ut.rx_bytes / 1024) }} KB / Up: {{ '%.1f'|format(ut.tx_bytes / 1024) }} KB">Traffic: {{ '%.1f'|format(total / 1024) }} KB</span>
                     {% endif %}
+                    {% if ut.throttled %}
+                    <span class="px-2 py-0.5 bg-red-900/50 text-red-400 text-xs rounded-full border border-red-700">Throttled</span>
                     {% endif %}
+                    {% endif %}
+                    {% endif %}
+                    {% if user.get("traffic_limit_gb", 0) > 0 %}
+                    <span class="px-2 py-0.5 bg-yellow-900/50 text-yellow-400 text-xs rounded-full border border-yellow-800">Limit: {{ user.traffic_limit_gb }} GB</span>
+                    {% endif %}
+                    {% if user.get("throttle_speed_mbps", 0) > 0 %}
+                    <span class="px-2 py-0.5 bg-orange-900/50 text-orange-400 text-xs rounded-full border border-orange-800">Speed: {{ user.throttle_speed_mbps }} Mbps</span>
                     {% endif %}
                 </div>
                 <div class="space-y-2">
@@ -80,6 +89,11 @@
                 </div>
             </div>
             <div class="flex items-center gap-2">
+                <button type="button" title="Settings"
+                    onclick="openUserSettings({{ loop.index0 }}, '{{ user.name }}', '{{ user.fake_tls_domain|default("", true) }}', {{ user.get('traffic_limit_gb', 0) }}, {{ user.get('throttle_speed_mbps', 0) }})"
+                    class="p-2 rounded-lg bg-dark-600 text-dark-300 hover:bg-indigo-900/50 hover:text-indigo-400 transition-all">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                </button>
                 <form method="POST" action="{{ url_for('user_toggle', idx=loop.index0) }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" title="{% if user.enabled %}Disable{% else %}Enable{% endif %}"
@@ -149,7 +163,69 @@
     </div>
 </div>
 
+<!-- User Settings Modal -->
+<div id="settings-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onclick="if(event.target===this)this.classList.add('hidden')">
+    <div class="card rounded-xl p-6 w-full max-w-md mx-4">
+        <h3 class="text-lg font-semibold text-white mb-4" id="settings-title">User Settings</h3>
+        <form method="POST" id="settings-form" action="">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+            {% if cfg.port_443_mode %}
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-dark-200 mb-1.5">SNI Domain</label>
+                <select name="fake_tls_domain" id="settings-ftd"
+                    class="w-full px-3.5 py-2.5 bg-dark-700 border border-dark-500 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                    {% for d in domain_pool %}
+                    <option value="{{ d }}">{{ d }}{% if d in used_domains %} (in use){% endif %}</option>
+                    {% endfor %}
+                </select>
+                <p class="text-dark-400 text-xs mt-1">Changing domain will regenerate the secret and restart the proxy</p>
+            </div>
+            {% endif %}
+
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-dark-200 mb-1.5">Traffic Limit (GB)</label>
+                <input type="number" name="traffic_limit_gb" id="settings-limit" step="0.1" min="0"
+                    class="w-full px-3.5 py-2.5 bg-dark-700 border border-dark-500 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    placeholder="0 = use global default">
+                <p class="text-dark-400 text-xs mt-1">0 = use global setting ({{ cfg.traffic_limit_gb or 'no limit' }}{% if cfg.traffic_limit_gb %} GB{% endif %})</p>
+            </div>
+
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-dark-200 mb-1.5">Throttle Speed (Mbps)</label>
+                <input type="number" name="throttle_speed_mbps" id="settings-speed" step="0.1" min="0"
+                    class="w-full px-3.5 py-2.5 bg-dark-700 border border-dark-500 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                    placeholder="0 = use global default">
+                <p class="text-dark-400 text-xs mt-1">0 = use global setting ({{ cfg.throttle_speed_mbps }} Mbps)</p>
+            </div>
+
+            <div class="flex gap-3 justify-end">
+                <button type="button" onclick="document.getElementById('settings-modal').classList.add('hidden')"
+                    class="px-4 py-2.5 bg-dark-600 text-dark-200 rounded-lg text-sm font-medium hover:bg-dark-500 transition-all">
+                    Cancel
+                </button>
+                <button type="submit"
+                    class="btn-primary text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:shadow-lg hover:shadow-indigo-500/25 transition-all">
+                    Save
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
+function openUserSettings(idx, name, ftd, limitGb, speedMbps) {
+    document.getElementById('settings-title').textContent = name + ' — Settings';
+    document.getElementById('settings-form').action = '/users/' + idx + '/settings';
+    document.getElementById('settings-limit').value = limitGb || 0;
+    document.getElementById('settings-speed').value = speedMbps || 0;
+    var ftdSelect = document.getElementById('settings-ftd');
+    if (ftdSelect && ftd) {
+        ftdSelect.value = ftd;
+    }
+    document.getElementById('settings-modal').classList.remove('hidden');
+}
+
 function copyText(text, btn) {
     navigator.clipboard.writeText(text).then(() => {
         const orig = btn.innerHTML;
